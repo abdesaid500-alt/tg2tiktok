@@ -83,7 +83,7 @@ class GoogleDriveUploader:
                 body={"type": "anyone", "role": "reader"},
             ).execute()
 
-        return f"https://drive.google.com/uc?id={file_id}&export=download"
+        return f"https://drive.google.com/uc?export=download&confirm=t&id={file_id}"
 
 
 class WoopSocialPublisher:
@@ -167,10 +167,15 @@ class WoopSocialPublisher:
                     "platform": "TIKTOK",
                     "socialAccountId": self._account_id,
                     "postType": "VIDEO",
+                    "postMode": "DIRECT_POST",
                     "privacyLevel": "PUBLIC_TO_EVERYONE",
                     "allowComment": True,
                     "allowDuet": False,
                     "allowStitch": False,
+                    "isYourBrand": False,
+                    "isBrandedContent": False,
+                    "isAiGeneratedContent": True,
+                    "autoAddMusic": True,
                 }
             ],
         }
