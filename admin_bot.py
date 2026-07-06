@@ -116,9 +116,6 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(
                 f"✅ تم تغيير خطة المستخدم {uid} إلى {PLANS[plan]['name_ar']}"
             )
-    elif data == "admin_add_user":
-        await query.edit_message_text("أرسل user_id للمستخدم الجديد:")
-        return ADD_USER_ID
     elif data == "admin_broadcast":
         await query.edit_message_text("📢 أرسل الرسالة التي تريد بثها لجميع المستخدمين:")
         return BROADCAST_MSG
@@ -152,6 +149,13 @@ async def _show_users_page(query, context, users, page):
         "\n".join(lines),
         reply_markup=InlineKeyboardMarkup(buttons),
     )
+
+
+async def add_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("أرسل user_id للمستخدم الجديد:")
+    return ADD_USER_ID
 
 
 async def add_user_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
