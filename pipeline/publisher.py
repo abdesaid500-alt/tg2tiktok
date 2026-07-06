@@ -1,0 +1,195 @@
+import os
+import pickle
+import base64
+import tempfile
+import logging
+import time
+from typing import Optional
+
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+from google.auth.transport.requests import Request
+
+logger = logging.getLogger(__name__)
+
+_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+
+
+class GoogleDriveUploader:
+    def __init__(self, credentials_b64: str, token_pickle_b64: str, folder_id: str):
+        self._creds_b64 = credentials_b64
+        self._token_b64 = token_pickle_b64
+        self._folder_id = folder_id
+        self._service = None
+
+    def _build_service(self):
+        cache_dir = tempfile.gettempdir()
+        pickle_path = os.path.join(cache_dir, "tg2tiktok_token.pickle")
+        creds = None
+
+        if self._token_b64:
+            try:
+                padding = "=" * (-len(self._token_b64) % 4)
+                token_bytes = base64.b64decode(self._token_b64 + padding)
+                with open(pickle_path, "wb") as f:
+                    f.write(token_bytes)
+            except Exception as e:
+                logger.warning("Could not decode TOKEN_PICKLE_B64: %s", e)
+
+        if os.path.exists(pickle_path):
+            try:
+                with open(pickle_path, "rb") as f:
+                    creds = pickle.load(f)
+            except Exception as e:
+                logger.warning("token.pickle corrupt, will refresh: %s", e)
+                creds = None
+
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                with open(pickle_path, "wb") as f:
+                    pickle.dump(creds, f)
+                logger.info("token.pickle refreshed")
+            except Exception as e:
+                logger.error("Token refresh failed: %s", e)
+                creds = None
+
+        if not creds or not creds.valid:
+            raise RuntimeError(
+                "Google Drive: لا يوجد token صالح. "
+                "تأكد من صحة TOKEN_PICKLE_B64 في Railway."
+            )
+
+        self._service = build("drive", "v3", credentials=creds)
+
+    def upload(self, file_path: str, public: bool = True) -> str:
+        if not self._service:
+            self._build_service()
+
+        name = os.path.basename(file_path)
+        media = MediaFileUpload(file_path, resumable=True, chunksize=5 * 1024 * 1024)
+        file_meta = {"name": name, "parents": [self._folder_id]}
+
+        drive_file = (
+            self._service.files()
+            .create(body=file_meta, media_body=media, fields="id")
+            .execute()
+        )
+        file_id = drive_file.get("id")
+
+        if public:
+            self._service.permissions().create(
+                fileId=file_id,
+                body={"type": "anyone", "role": "reader"},
+            ).execute()
+
+        return f"https://drive.google.com/uc?id={file_id}&export=download"
+
+
+class WoopSocialPublisher:
+    def __init__(self, api_key: str, project_id: str, account_id: str):
+        self._api_key = api_key
+        self._project_id = project_id
+        self._account_id = account_id
+        self._base = "https://api.woopsocial.com/v1"
+
+    def upload_media(self, file_url: str) -> Optional[str]:
+        import requests
+
+        tmp_path = None
+        try:
+            r = requests.get(file_url, stream=True, timeout=300)
+            r.raise_for_status()
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                for chunk in r.iter_content(8192):
+                    tmp.write(chunk)
+                tmp_path = tmp.name
+
+            for attempt in range(1, 4):
+                try:
+                    with open(tmp_path, "rb") as vf:
+                        resp = requests.post(
+                            f"{self._base}/media",
+                            headers={"Authorization": f"Bearer {self._api_key}"},
+                            data={"projectId": self._project_id},
+                            files={"file": ("video.mp4", vf, "video/mp4")},
+                            timeout=300,
+                        )
+                    if resp.status_code in (200, 201):
+                        data = resp.json()
+                        mid = (
+                            data.get("id")
+                            or data.get("mediaId")
+                            or data.get("media_id")
+                        )
+                        if mid:
+                            return mid
+                    logger.warning(
+                        "WoopSocial media attempt %d: %s %s",
+                        attempt, resp.status_code, resp.text[:200],
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "WoopSocial media attempt %d error: %s", attempt, e
+                    )
+                time.sleep(5)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+        logger.error("WoopSocial media upload failed after 3 attempts")
+        return None
+
+    def schedule_post(
+        self, media_id: str, schedule_at: str, description: str = ""
+    ) -> bool:
+        import requests
+
+        payload = {
+            "content": [
+                {
+                    "text": description,
+                    "media": [{"type": "MEDIA_LIBRARY", "mediaId": media_id}],
+                }
+            ],
+            "schedule": {
+                "type": "SCHEDULE_FOR_LATER",
+                "scheduledFor": schedule_at,
+            },
+            "autoDeleteMediaAfterPublish": True,
+            "socialAccounts": [
+                {
+                    "platform": "TIKTOK",
+                    "socialAccountId": self._account_id,
+                    "postType": "VIDEO",
+                    "privacyLevel": "PUBLIC_TO_EVERYONE",
+                    "allowComment": True,
+                    "allowDuet": False,
+                    "allowStitch": False,
+                }
+            ],
+        }
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        for attempt in range(1, 4):
+            try:
+                resp = requests.post(
+                    f"{self._base}/posts",
+                    headers=headers, json=payload, timeout=30,
+                )
+                if resp.status_code in (200, 201):
+                    return True
+                logger.warning(
+                    "WoopSocial post attempt %d: %s %s",
+                    attempt, resp.status_code, resp.text[:200],
+                )
+            except Exception as e:
+                logger.warning(
+                    "WoopSocial post attempt %d error: %s", attempt, e
+                )
+            time.sleep(5)
+
+        logger.error("WoopSocial schedule failed after 3 attempts")
+        return False

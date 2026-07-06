@@ -1,0 +1,333 @@
+import logging
+import time
+from datetime import datetime, timedelta
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
+    ConversationHandler, filters, ContextTypes,
+)
+
+from core.models import User, PLANS
+from core import storage as store
+from core.i18n import t
+
+logger = logging.getLogger(__name__)
+
+(
+    ASK_TELEGRAM_ID, ASK_PLAN, ASK_DAYS, ASK_MESSAGE,
+    ASK_API_KEY, ASK_PROJECT_ID, ASK_ACCOUNT_ID,
+) = range(7)
+
+
+def _is_admin(update: Update, admin_id: int) -> bool:
+    return update.effective_user.id == admin_id
+
+
+def _main_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👥 المستخدمين", callback_data="admin_users"),
+         InlineKeyboardButton("📊 إحصائيات", callback_data="admin_stats")],
+        [InlineKeyboardButton("➕ إضافة مستخدم", callback_data="admin_add"),
+         InlineKeyboardButton("📢 بث", callback_data="admin_broadcast")],
+    ])
+
+
+def _user_actions_keyboard(uid: int):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔇 تعطيل/تفعيل", callback_data=f"admin_toggle_{uid}"),
+         InlineKeyboardButton("🗑 حذف", callback_data=f"admin_delete_{uid}")],
+        [InlineKeyboardButton("📋 تغيير الخطة", callback_data=f"admin_plan_{uid}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="admin_users")],
+    ])
+
+
+def _plan_selector():
+    buttons = []
+    for key, pp in PLANS.items():
+        buttons.append([InlineKeyboardButton(
+            pp.name, callback_data=f"admin_newplan:{key}"
+        )])
+    buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_add")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def create_app(token: str, admin_id: int):
+    app = Application.builder().token(token).build()
+
+    async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not _is_admin(update, admin_id):
+            await update.message.reply_text(t("ar", "not_admin"))
+            return
+        users_data = await store.get("users")
+        total = len(users_data)
+        active = sum(
+            1 for u in users_data.values()
+            if User(**u).is_active()
+        )
+        text = f"🔐 لوحة التحكم\nالإجمالي: {total}\nالنشطاء: {active}"
+        await update.message.reply_text(text, reply_markup=_main_keyboard())
+
+    async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        if not _is_admin(update, admin_id):
+            await query.edit_message_text(t("ar", "not_admin"))
+            return
+
+        data = query.data
+        users_data = await store.get("users")
+
+        if data == "admin_stats":
+            total = len(users_data)
+            active = sum(1 for u in users_data.values() if User(**u).is_active())
+            by_plan = {}
+            for u in users_data.values():
+                p = u.get("plan", "unknown")
+                by_plan[p] = by_plan.get(p, 0) + 1
+            plan_lines = "\n".join(
+                f"{PLANS.get(k, PLANS['trial']).name}: {v}"
+                for k, v in by_plan.items()
+            )
+            text = f"📊 إحصائيات\nالإجمالي: {total}\nالنشطاء: {active}\n\n{plan_lines}"
+            await query.edit_message_text(text, reply_markup=_main_keyboard())
+
+        elif data == "admin_users":
+            await _show_users(query, users_data, 0)
+
+        elif data.startswith("admin_users_page_"):
+            page = int(data.replace("admin_users_page_", ""))
+            await _show_users(query, users_data, page)
+
+        elif data.startswith("admin_toggle_"):
+            uid = data.replace("admin_toggle_", "")
+            u = users_data.get(uid)
+            if u:
+                u["status"] = "inactive" if u.get("status") == "active" else "active"
+                users_data[uid] = u
+                await store.save("users")
+                status = "مفعل" if u["status"] == "active" else "موقوف"
+                await query.edit_message_text(f"✅ تم {status} المستخدم {uid}")
+
+        elif data.startswith("admin_delete_"):
+            uid = data.replace("admin_delete_", "")
+            if uid in users_data:
+                del users_data[uid]
+                await store.save("users")
+                await query.edit_message_text(f"✅ تم حذف المستخدم {uid}")
+
+        elif data.startswith("admin_plan_"):
+            uid = data.replace("admin_plan_", "")
+            context.user_data["admin_plan_uid"] = uid
+            await query.edit_message_text(
+                "اختر الخطة الجديدة:",
+                reply_markup=_plan_selector(),
+            )
+
+        elif data.startswith("admin_setplan_"):
+            plan = data.replace("admin_setplan_", "")
+            uid = context.user_data.get("admin_plan_uid")
+            if uid and uid in users_data:
+                pp = PLANS.get(plan, PLANS["trial"])
+                users_data[uid]["plan"] = plan
+                users_data[uid]["expires_at"] = time.time() + pp.duration_days * 86400
+                await store.save("users")
+                await query.edit_message_text(
+                    f"✅ تم تغيير خطة المستخدم {uid} إلى {pp.name}"
+                )
+
+        elif data == "admin_add":
+            await query.edit_message_text("أرسل معرف المستخدم (user_id):")
+            return ASK_TELEGRAM_ID
+
+    async def _show_users(query, users_data, page):
+        per_page = 5
+        total_pages = max(1, (len(users_data) + per_page - 1) // per_page)
+        start = page * per_page
+        items = list(users_data.items())[start:start + per_page]
+        lines = [f"👥 المستخدمين (صفحة {page + 1}/{total_pages}):"]
+        for uid, u in items:
+            u_obj = User(**u)
+            act = "🟢" if u_obj.is_active() else "🔴"
+            plan_name = PLANS.get(u_obj.plan, PLANS["trial"]).name
+            expires = time.strftime("%Y-%m-%d", time.localtime(u_obj.expires_at))
+            lines.append(f"{act} ID: {uid} | {plan_name} | {expires}")
+        buttons = []
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("⬅️", callback_data=f"admin_users_page_{page - 1}"))
+        nav.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="admin_noop"))
+        if page < total_pages - 1:
+            nav.append(InlineKeyboardButton("➡️", callback_data=f"admin_users_page_{page + 1}"))
+        if nav:
+            buttons.append(nav)
+        for uid, _ in items:
+            buttons.append([
+                InlineKeyboardButton(f"👤 {uid}", callback_data=f"admin_user_{uid}")
+            ])
+        buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_back")])
+        await query.edit_message_text(
+            "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+
+    admin_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_callback, pattern="^admin_"
+            r"(add|stats|users|users_page_\d+|toggle_\d+|delete_\d+|"
+            r"plan_\d+|setplan_|back|noop|user_\d+)")],
+        states={
+            ASK_TELEGRAM_ID: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, _on_telegram_id)
+            ],
+            ASK_PLAN: [CallbackQueryHandler(_on_plan, pattern="^admin_newplan:")],
+            ASK_API_KEY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, _on_api_key)
+            ],
+            ASK_PROJECT_ID: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, _on_project_id)
+            ],
+            ASK_ACCOUNT_ID: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, _on_account_id)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
+        allow_reentry=True,
+    )
+
+    broadcast_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(_start_broadcast, pattern="^admin_broadcast$")],
+        states={
+            ASK_MESSAGE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, _on_broadcast)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
+    )
+
+    app.bot_data["admin_id"] = admin_id
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(admin_handler)
+    app.add_handler(broadcast_handler)
+    app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
+
+    return app
+
+
+async def _on_telegram_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update, context.application.bot_data.get("admin_id", 0)):
+        return ConversationHandler.END
+    text = update.message.text.strip()
+    try:
+        uid = int(text)
+    except ValueError:
+        await update.message.reply_text("❌ يجب أن يكون المعرف رقماً.")
+        return ConversationHandler.END
+
+    users_data = await store.get("users")
+    if str(uid) in users_data:
+        await update.message.reply_text("❌ المستخدم موجود مسبقاً.")
+        return ConversationHandler.END
+
+    context.user_data["new_uid"] = uid
+    await update.message.reply_text("اختر الخطة:", reply_markup=_plan_selector())
+    return ASK_PLAN
+
+
+async def _on_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not _is_admin(update, context.application.bot_data.get("admin_id", 0)):
+        return ConversationHandler.END
+
+    plan = query.data.replace("admin_newplan:", "")
+    context.user_data["new_plan"] = plan
+    context.user_data["new_username"] = str(context.user_data["new_uid"])
+    await query.edit_message_text("أرسل WoopSocial API Key:")
+    return ASK_API_KEY
+
+
+async def _on_api_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update, context.application.bot_data.get("admin_id", 0)):
+        return ConversationHandler.END
+    context.user_data["new_api_key"] = update.message.text.strip()
+    await update.message.reply_text("أرسل WoopSocial Project ID:")
+    return ASK_PROJECT_ID
+
+
+async def _on_project_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update, context.application.bot_data.get("admin_id", 0)):
+        return ConversationHandler.END
+    context.user_data["new_project_id"] = update.message.text.strip()
+    await update.message.reply_text("أرسل WoopSocial Account ID:")
+    return ASK_ACCOUNT_ID
+
+
+async def _on_account_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update, context.application.bot_data.get("admin_id", 0)):
+        return ConversationHandler.END
+
+    uid = context.user_data["new_uid"]
+    plan = context.user_data["new_plan"]
+    api_key = context.user_data["new_api_key"]
+    project_id = context.user_data["new_project_id"]
+    account_id = update.message.text.strip()
+    username = context.user_data.get("new_username", str(uid))
+
+    pp = PLANS.get(plan, PLANS["trial"])
+    now = time.time()
+    user = User(
+        telegram_id=uid,
+        plan=plan,
+        created_at=now,
+        expires_at=now + pp.duration_days * 86400,
+        username=username,
+        status="active",
+        woopsocial_api_key=api_key,
+        woopsocial_project_id=project_id,
+        woopsocial_account_id=account_id,
+    )
+
+    users_data = await store.get("users")
+    users_data[str(uid)] = user.__dict__
+    await store.save("users")
+
+    try:
+        await context.bot.send_message(
+            chat_id=uid,
+            text=f"🎉 تم تفعيل حسابك!\nالخطة: {pp.name}\nتاريخ الانتهاء: {time.strftime('%Y-%m-%d', time.localtime(user.expires_at))}",
+        )
+    except Exception:
+        pass
+
+    await update.message.reply_text(
+        f"✅ تم إنشاء المستخدم!\n👤 {username}\n📋 {pp.name}",
+        reply_markup=_main_keyboard(),
+    )
+    return ConversationHandler.END
+
+
+async def _start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not _is_admin(update, context.application.bot_data.get("admin_id", 0)):
+        return ConversationHandler.END
+    await query.edit_message_text("📢 أرسل الرسالة التي تريد بثها لجميع المستخدمين:")
+    return ASK_MESSAGE
+
+
+async def _on_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update, context.application.bot_data.get("admin_id", 0)):
+        return ConversationHandler.END
+    text = update.message.text.strip()
+    users_data = await store.get("users")
+    sent = 0
+    for uid in users_data:
+        try:
+            await context.bot.send_message(chat_id=int(uid), text=text)
+            sent += 1
+        except Exception:
+            pass
+    await update.message.reply_text(
+        f"✅ تم البث لـ {sent} من أصل {len(users_data)} مستخدم."
+    )
+    return ConversationHandler.END
