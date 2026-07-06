@@ -8,6 +8,8 @@ DRIVE_FOLDER_ID            = os.environ.get("DRIVE_FOLDER_ID", "1orTPggd2mdecKNR
 DRIVE_DELETE_AFTER_MINUTES = 30
 
 WOOPSOCIAL_BASE = "https://api.woopsocial.com/v1"
+WOOSOCIAL_PROJECT_ID   = os.environ.get("WOOSOCIAL_PROJECT_ID", "")
+TIKTOK_ACCOUNT_ID      = os.environ.get("TIKTOK_ACCOUNT_ID", "")
 
 DEFAULT_SPEED    = 1.1
 DEFAULT_SPLIT    = 10

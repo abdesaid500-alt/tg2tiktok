@@ -3,7 +3,7 @@ import shutil
 import logging
 import asyncio
 from datetime import datetime
-from config import TEMP_DIR, PLANS
+from config import TEMP_DIR, PLANS, WOOSOCIAL_PROJECT_ID, TIKTOK_ACCOUNT_ID
 from database import get_user, get_plan_info, increment_daily, can_process, is_active
 from downloader import get_video_info, download_video
 from splitter import split_video
@@ -67,8 +67,8 @@ async def process_video(user_id, url, bot, message_id):
     await _update_message(bot, user_id, status_msg, "📤 جاري جدولة النشر على TikTok...")
     schedule_minutes = user.get("schedule_minutes", 15)
     api_key = user.get("woopsocial_api_key", "")
-    project_id = user.get("woopsocial_project_id", "")
-    social_account_id = user.get("woopsocial_social_account_id", "")
+    project_id = WOOSOCIAL_PROJECT_ID
+    social_account_id = TIKTOK_ACCOUNT_ID
     save_schedule(user_id, uploaded_parts, schedule_minutes)
     _cleanup(file_path, file_key)
     increment_daily(user_id)

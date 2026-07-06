@@ -26,8 +26,8 @@ from keyboards import (
 logger = logging.getLogger("admin_bot")
 
 # Conversation states
-ADD_USER_ID, ADD_API_KEY, ADD_PROJECT_ID, ADD_ACCOUNT_ID, ADD_PLAN = range(5)
-SEARCH_USER, EXTEND_DAYS, BROADCAST_MSG = range(5, 8)
+ADD_USER_ID, ADD_API_KEY, ADD_PLAN = range(3)
+SEARCH_USER, EXTEND_DAYS, BROADCAST_MSG = range(3, 6)
 
 
 def _is_admin(update: Update):
@@ -174,15 +174,7 @@ async def add_user_conversation(update: Update, context: ContextTypes.DEFAULT_TY
             return ConversationHandler.END
     elif state == ADD_API_KEY:
         context.user_data["add_api_key"] = text
-        context.user_data["add_user_state"] = ADD_PROJECT_ID
-        await update.message.reply_text("أرسل Project ID:")
-        return ADD_PROJECT_ID
-    elif state == ADD_PROJECT_ID:
-        context.user_data["add_project_id"] = text
-        context.user_data["add_user_state"] = ADD_ACCOUNT_ID
-        await update.message.reply_text("أرسل Social Account ID:")
-        return ADD_ACCOUNT_ID
-    elif state == ADD_ACCOUNT_ID:
+        context.user_data["add_user_state"] = ADD_PLAN
         context.user_data["add_account_id"] = text
         context.user_data["add_user_state"] = ADD_PLAN
         buttons = []
@@ -207,13 +199,9 @@ async def add_user_plan_confirm(update: Update, context: ContextTypes.DEFAULT_TY
     plan = query.data.replace("admin_confirm_plan_", "")
     uid = context.user_data.get("add_uid")
     api_key = context.user_data.get("add_api_key", "")
-    project_id = context.user_data.get("add_project_id", "")
-    account_id = context.user_data.get("add_account_id", "")
     user = create_user(uid, plan=plan)
-    update_user(uid,
-                woopsocial_api_key=api_key,
-                woopsocial_project_id=project_id,
-                woopsocial_social_account_id=account_id)
+    if api_key:
+        update_user(uid, woopsocial_api_key=api_key)
     await query.edit_message_text(
         f"✅ تم إضافة المستخدم {uid}\nالخطة: {PLANS[plan]['name_ar']}"
     )
@@ -392,15 +380,13 @@ def build_admin_app():
     app.add_handler(CommandHandler("search", admin_search))
     app.add_handler(CommandHandler("extend", admin_extend))
     add_user_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_callback, pattern="^admin_add_user$")],
+        entry_points=[CallbackQueryHandler(add_user_callback, pattern="^admin_add_user$")],
         states={
             ADD_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_conversation)],
             ADD_API_KEY: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_conversation)],
-            ADD_PROJECT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_conversation)],
-            ADD_ACCOUNT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_conversation)],
             ADD_PLAN: [CallbackQueryHandler(add_user_plan_confirm, pattern="^admin_confirm_plan_")],
         },
-        fallbacks=[CommandHandler("cancel", add_user_cancel)],
+        fallbacks=[MessageHandler(filters.COMMAND, add_user_cancel)],
     )
     app.add_handler(add_user_conv)
     broadcast_conv = ConversationHandler(
