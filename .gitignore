@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.env
+data/
+temp_videos/
+*.pickle
+token_b64.txt
+credentials.json
