@@ -97,6 +97,7 @@ class WoopSocialPublisher:
         import requests
 
         tmp_path = None
+        last_error = ""
         try:
             r = requests.get(file_url, stream=True, timeout=300)
             r.raise_for_status()
@@ -110,8 +111,8 @@ class WoopSocialPublisher:
                     with open(tmp_path, "rb") as vf:
                         resp = requests.post(
                             f"{self._base}/media",
+                            params={"projectId": self._project_id},
                             headers={"Authorization": f"Bearer {self._api_key}"},
-                            data={"projectId": self._project_id},
                             files={"file": ("video.mp4", vf, "video/mp4")},
                             timeout=300,
                         )
@@ -124,11 +125,12 @@ class WoopSocialPublisher:
                         )
                         if mid:
                             return mid
+                    last_error = f"{resp.status_code} {resp.text[:300]}"
                     logger.warning(
-                        "WoopSocial media attempt %d: %s %s",
-                        attempt, resp.status_code, resp.text[:200],
+                        "WoopSocial media attempt %d: %s", attempt, last_error,
                     )
                 except Exception as e:
+                    last_error = str(e)
                     logger.warning(
                         "WoopSocial media attempt %d error: %s", attempt, e
                     )
@@ -137,13 +139,16 @@ class WoopSocialPublisher:
             if tmp_path and os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
-        logger.error("WoopSocial media upload failed after 3 attempts")
+        logger.error("WoopSocial media upload failed: %s", last_error)
         return None
 
     def schedule_post(
         self, media_id: str, schedule_at: str, description: str = ""
     ) -> bool:
         import requests
+
+        if not schedule_at.endswith("Z"):
+            schedule_at += "Z"
 
         payload = {
             "content": [
@@ -183,7 +188,7 @@ class WoopSocialPublisher:
                     return True
                 logger.warning(
                     "WoopSocial post attempt %d: %s %s",
-                    attempt, resp.status_code, resp.text[:200],
+                    attempt, resp.status_code, resp.text[:500],
                 )
             except Exception as e:
                 logger.warning(
