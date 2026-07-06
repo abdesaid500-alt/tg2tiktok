@@ -190,6 +190,7 @@ class WoopSocialPublisher:
                     headers=headers, json=payload, timeout=30,
                 )
                 if resp.status_code in (200, 201):
+                    logger.info("WoopSocial post created: %s", resp.text[:200])
                     return True
                 logger.warning(
                     "WoopSocial post attempt %d: %s %s",

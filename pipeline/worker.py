@@ -177,10 +177,13 @@ class Worker:
             interval = user.schedule_interval
             now = datetime.utcnow()
             success_count = 0
+            buffer_minutes = 5
 
             for i, dl_url in enumerate(drive_urls):
-                schedule_at = (now + timedelta(minutes=i * interval)).isoformat()
-                caption = f"{item.video_title} | {i + 1}/{len(parts)}"
+                offset = buffer_minutes + (i * interval)
+                schedule_at = (now + timedelta(minutes=offset)).isoformat()
+                title_short = item.video_title[:50] if item.video_title else "فيديو"
+                caption = f"{title_short} | {i + 1}/{len(parts)}"
 
                 media_id = publisher.upload_media(dl_url)
                 if not media_id:
