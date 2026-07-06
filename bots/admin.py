@@ -33,7 +33,7 @@ def _main_keyboard():
     ])
 
 
-def _user_actions_keyboard(uid: int):
+def _user_details_keyboard(uid: int):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔇 تعطيل/تفعيل", callback_data=f"admin_toggle_{uid}"),
          InlineKeyboardButton("🗑 حذف", callback_data=f"admin_delete_{uid}")],
@@ -42,13 +42,13 @@ def _user_actions_keyboard(uid: int):
     ])
 
 
-def _plan_selector():
+def _plan_selector(prefix: str = "admin_newplan:"):
     buttons = []
     for key, pp in PLANS.items():
         buttons.append([InlineKeyboardButton(
-            pp.name, callback_data=f"admin_newplan:{key}"
+            pp.name, callback_data=f"{prefix}{key}"
         )])
-    buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_add")])
+    buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_users")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -99,6 +99,29 @@ def create_app(token: str, admin_id: int):
             page = int(data.replace("admin_users_page_", ""))
             await _show_users(query, users_data, page)
 
+        elif data.startswith("admin_user_"):
+            uid = data.replace("admin_user_", "")
+            u = users_data.get(uid)
+            if not u:
+                await query.edit_message_text("❌ المستخدم غير موجود.")
+                return
+            u_obj = User(**u)
+            act = "🟢 نشط" if u_obj.is_active() else "🔴 موقوف"
+            plan_name = PLANS.get(u_obj.plan, PLANS["trial"]).name
+            expires = time.strftime("%Y-%m-%d", time.localtime(u_obj.expires_at))
+            created = time.strftime("%Y-%m-%d", time.localtime(u_obj.created_at))
+            text = (
+                f"👤 **المستخدم {uid}**\n"
+                f"{act}\n"
+                f"📋 الخطة: {plan_name}\n"
+                f"📅 أنشئ: {created}\n"
+                f"⏳ ينتهي: {expires}\n"
+                f"🔑 API Key: {'✅' if u_obj.woopsocial_api_key else '❌'}"
+            )
+            await query.edit_message_text(
+                text, reply_markup=_user_details_keyboard(int(uid))
+            )
+
         elif data.startswith("admin_toggle_"):
             uid = data.replace("admin_toggle_", "")
             u = users_data.get(uid)
@@ -121,11 +144,11 @@ def create_app(token: str, admin_id: int):
             context.user_data["admin_plan_uid"] = uid
             await query.edit_message_text(
                 "اختر الخطة الجديدة:",
-                reply_markup=_plan_selector(),
+                reply_markup=_plan_selector(prefix="admin_setplan:"),
             )
 
-        elif data.startswith("admin_setplan_"):
-            plan = data.replace("admin_setplan_", "")
+        elif data.startswith("admin_setplan:"):
+            plan = data.replace("admin_setplan:", "")
             uid = context.user_data.get("admin_plan_uid")
             if uid and uid in users_data:
                 pp = PLANS.get(plan, PLANS["trial"])
@@ -135,6 +158,9 @@ def create_app(token: str, admin_id: int):
                 await query.edit_message_text(
                     f"✅ تم تغيير خطة المستخدم {uid} إلى {pp.name}"
                 )
+
+        elif data in ("admin_back", "admin_noop"):
+            await query.edit_message_text("🔐 لوحة التحكم", reply_markup=_main_keyboard())
 
         elif data == "admin_add":
             await query.edit_message_text("أرسل معرف المستخدم (user_id):")
@@ -174,7 +200,7 @@ def create_app(token: str, admin_id: int):
     admin_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_callback, pattern="^admin_"
             r"(add|stats|users|users_page_\d+|toggle_\d+|delete_\d+|"
-            r"plan_\d+|setplan_|back|noop|user_\d+)")],
+            r"plan_\d+|setplan:|setplan_|back|noop|user_\d+)")],
         states={
             ASK_TELEGRAM_ID: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, _on_telegram_id)
