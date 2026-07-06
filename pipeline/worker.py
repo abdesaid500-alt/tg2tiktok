@@ -178,6 +178,7 @@ class Worker:
             now = datetime.utcnow()
             success_count = 0
             buffer_minutes = 5
+            last_pub_error = ""
 
             for i, dl_url in enumerate(drive_urls):
                 offset = buffer_minutes + (i * interval)
@@ -189,9 +190,11 @@ class Worker:
                 if not media_id:
                     continue
 
-                ok = publisher.schedule_post(media_id, schedule_at, caption)
+                ok, err = publisher.schedule_post(media_id, schedule_at, caption)
                 if ok:
                     success_count += 1
+                elif err:
+                    last_pub_error = err
 
             if success_count > 0:
                 user.total_videos += 1
@@ -207,8 +210,9 @@ class Worker:
                     f"🎉 تم نشر {success_count} جزء — جزء كل {interval} دقيقة",
                 )
             else:
+                err_txt = last_pub_error or "تحقق من بيانات WoopSocial."
                 await self._notify.notify_user(
-                    uid, "❌ فشل النشر على تيكتوك. تحقق من بيانات WoopSocial."
+                    uid, f"❌ فشل النشر على تيكتوك:\n{err_txt[:200]}"
                 )
 
         except PermissionError:

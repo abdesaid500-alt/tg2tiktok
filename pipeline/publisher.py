@@ -144,7 +144,7 @@ class WoopSocialPublisher:
 
     def schedule_post(
         self, media_id: str, schedule_at: str, description: str = ""
-    ) -> bool:
+    ) -> tuple[bool, str]:
         import requests
 
         if not schedule_at.endswith("Z"):
@@ -183,6 +183,7 @@ class WoopSocialPublisher:
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
+        last_err = ""
         for attempt in range(1, 4):
             try:
                 resp = requests.post(
@@ -191,16 +192,22 @@ class WoopSocialPublisher:
                 )
                 if resp.status_code in (200, 201):
                     logger.info("WoopSocial post created: %s", resp.text[:200])
-                    return True
+                    return True, ""
+                try:
+                    body = resp.json()
+                    last_err = body.get("message") or body.get("code") or resp.text[:300]
+                except Exception:
+                    last_err = resp.text[:300]
                 logger.warning(
                     "WoopSocial post attempt %d: %s %s",
-                    attempt, resp.status_code, resp.text[:500],
+                    attempt, resp.status_code, last_err,
                 )
             except Exception as e:
+                last_err = str(e)
                 logger.warning(
                     "WoopSocial post attempt %d error: %s", attempt, e
                 )
             time.sleep(5)
 
-        logger.error("WoopSocial schedule failed after 3 attempts")
-        return False
+        logger.error("WoopSocial schedule failed: %s", last_err)
+        return False, last_err
