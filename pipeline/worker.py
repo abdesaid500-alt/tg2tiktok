@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import time
@@ -15,6 +16,9 @@ from pipeline.publisher import GoogleDriveUploader, WoopSocialPublisher
 
 logger = logging.getLogger(__name__)
 
+_DRIVE_DELETE_DELAY_MINUTES = 30
+_DELETIONS_FILE = "drive_deletions.json"
+
 
 class Worker:
     def __init__(self, settings: Settings, notify: Notifier):
@@ -26,6 +30,7 @@ class Worker:
         self._temp_dir = settings.temp_dir
         self._drive: Optional[GoogleDriveUploader] = None
         self._publishers: dict[int, WoopSocialPublisher] = {}
+        self._pending_deletions: dict[str, float] = {}  # file_id -> delete_after_timestamp
 
     def _get_drive(self) -> GoogleDriveUploader:
         if not self._drive:
@@ -108,9 +113,54 @@ class Worker:
                 })
         return items
 
+    def _load_pending_deletions(self):
+        path = os.path.join(self._settings.data_dir, _DELETIONS_FILE)
+        try:
+            with open(path, "r") as f:
+                self._pending_deletions = json.load(f)
+            logger.info("Loaded %d pending deletions", len(self._pending_deletions))
+        except (FileNotFoundError, json.JSONDecodeError):
+            self._pending_deletions = {}
+
+    def _save_pending_deletions(self):
+        path = os.path.join(self._settings.data_dir, _DELETIONS_FILE)
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                json.dump(self._pending_deletions, f)
+        except Exception as e:
+            logger.warning("Failed to save pending deletions: %s", e)
+
+    def _schedule_drive_deletion(self, drive_url: str):
+        import re
+        m = re.search(r'id=([^&\s]+)', drive_url)
+        if not m:
+            return
+        file_id = m.group(1)
+        delete_at = time.time() + _DRIVE_DELETE_DELAY_MINUTES * 60
+        self._pending_deletions[file_id] = delete_at
+        self._save_pending_deletions()
+        logger.info("Scheduled Drive deletion for %s at %s", file_id,
+                    time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(delete_at)))
+
+    def _cleanup_drive_files(self):
+        now = time.time()
+        expired = [fid for fid, ts in self._pending_deletions.items() if now >= ts]
+        if not expired:
+            return
+        drive = self._get_drive()
+        for fid in expired:
+            ok = drive.delete(fid)
+            if ok:
+                del self._pending_deletions[fid]
+        if expired:
+            self._save_pending_deletions()
+
     async def run(self):
         logger.info("Worker started")
         os.makedirs(self._temp_dir, exist_ok=True)
+        self._load_pending_deletions()
+        last_cleanup = time.time()
 
         while not self._stop.is_set():
             try:
@@ -125,7 +175,11 @@ class Worker:
                 self._processing.add(uid)
                 asyncio.create_task(self._process_item(item))
             except asyncio.TimeoutError:
-                continue
+                pass
+
+            if time.time() - last_cleanup > 60:
+                self._cleanup_drive_files()
+                last_cleanup = time.time()
 
         logger.info("Worker stopped")
 
@@ -165,7 +219,6 @@ class Worker:
             await self._notify.notify_user(uid, f"☁️ جاري الرفع... ({len(parts)} أجزاء)")
 
             drive = self._get_drive()
-            publisher = self._get_publisher(user)
 
             drive_urls = []
             for p in parts:
@@ -174,25 +227,31 @@ class Worker:
 
             await self._notify.notify_user(uid, "📤 جاري الجدولة على تيكتوك...")
 
+            publisher = self._get_publisher(user)
+
+            media_ids = []
+            for dl_url in drive_urls:
+                media_id = publisher.upload_media(dl_url)
+                media_ids.append(media_id)
+
             interval = user.schedule_interval
             now = datetime.utcnow()
             success_count = 0
             buffer_minutes = 5
             last_pub_error = ""
 
-            for i, dl_url in enumerate(drive_urls):
+            for i, media_id in enumerate(media_ids):
+                if not media_id:
+                    continue
                 offset = buffer_minutes + (i * interval)
                 schedule_at = (now + timedelta(minutes=offset)).isoformat()
                 title_short = item.video_title[:50] if item.video_title else "فيديو"
                 caption = f"{title_short} | {i + 1}/{len(parts)}"
 
-                media_id = publisher.upload_media(dl_url)
-                if not media_id:
-                    continue
-
                 ok, err = publisher.schedule_post(media_id, schedule_at, caption)
                 if ok:
                     success_count += 1
+                    self._schedule_drive_deletion(drive_urls[i])
                 elif err:
                     last_pub_error = err
 

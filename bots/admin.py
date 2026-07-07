@@ -33,13 +33,18 @@ def _main_keyboard():
     ])
 
 
-def _user_details_keyboard(uid: int):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔇 تعطيل/تفعيل", callback_data=f"admin_toggle_{uid}"),
-         InlineKeyboardButton("🗑 حذف", callback_data=f"admin_delete_{uid}")],
-        [InlineKeyboardButton("📋 تغيير الخطة", callback_data=f"admin_plan_{uid}")],
-        [InlineKeyboardButton("🔙 رجوع", callback_data="admin_users")],
-    ])
+def _user_details_keyboard(uid: int, user: User = None):
+    buttons = []
+    if user and user.is_active():
+        buttons.append([InlineKeyboardButton("🔴 إيقاف", callback_data=f"admin_stop_{uid}"),
+                        InlineKeyboardButton("🗑 حذف", callback_data=f"admin_delete_{uid}")])
+    else:
+        buttons.append([InlineKeyboardButton("🟢 تفعيل", callback_data=f"admin_activate_{uid}"),
+                        InlineKeyboardButton("🗑 حذف", callback_data=f"admin_delete_{uid}")])
+    buttons.append([InlineKeyboardButton("📋 تغيير الخطة", callback_data=f"admin_plan_{uid}")])
+    buttons.append([InlineKeyboardButton("🌐 تغيير اللغة", callback_data=f"admin_lang_{uid}")])
+    buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_users")])
+    return InlineKeyboardMarkup(buttons)
 
 
 def _plan_selector(prefix: str = "admin_newplan:"):
@@ -50,6 +55,14 @@ def _plan_selector(prefix: str = "admin_newplan:"):
         )])
     buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_users")])
     return InlineKeyboardMarkup(buttons)
+
+
+def _lang_selector(uid: int):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🇸🇦 العربية", callback_data=f"admin_lang_{uid}_ar"),
+         InlineKeyboardButton("🇬🇧 English", callback_data=f"admin_lang_{uid}_en")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=f"admin_user_{uid}")],
+    ])
 
 
 def create_app(token: str, admin_id: int):
@@ -119,18 +132,45 @@ def create_app(token: str, admin_id: int):
                 f"🔑 API Key: {'✅' if u_obj.woopsocial_api_key else '❌'}"
             )
             await query.edit_message_text(
-                text, reply_markup=_user_details_keyboard(int(uid))
+                text, reply_markup=_user_details_keyboard(int(uid), u_obj)
             )
 
-        elif data.startswith("admin_toggle_"):
-            uid = data.replace("admin_toggle_", "")
+        elif data.startswith("admin_stop_"):
+            uid = data.replace("admin_stop_", "")
             u = users_data.get(uid)
             if u:
-                u["status"] = "inactive" if u.get("status") == "active" else "active"
+                u["status"] = "inactive"
                 users_data[uid] = u
                 await store.save("users")
-                status = "مفعل" if u["status"] == "active" else "موقوف"
-                await query.edit_message_text(f"✅ تم {status} المستخدم {uid}")
+                await query.edit_message_text(f"✅ تم إيقاف المستخدم {uid}")
+
+        elif data.startswith("admin_activate_"):
+            uid = data.replace("admin_activate_", "")
+            u = users_data.get(uid)
+            if u:
+                u["status"] = "active"
+                users_data[uid] = u
+                await store.save("users")
+                await query.edit_message_text(f"✅ تم تفعيل المستخدم {uid}")
+
+        elif data.startswith("admin_lang_"):
+            parts = data.split("_")
+            uid = parts[2]
+            u = users_data.get(uid)
+            if not u:
+                await query.edit_message_text("❌ المستخدم غير موجود.")
+                return
+            if len(parts) >= 4:
+                new_lang = parts[3]
+                u["language"] = new_lang
+                users_data[uid] = u
+                await store.save("users")
+                lang_name = "العربية" if new_lang == "ar" else "English"
+                await query.edit_message_text(f"✅ تم تغيير لغة المستخدم {uid} إلى {lang_name}")
+            else:
+                await query.edit_message_text(
+                    "🌐 اختر اللغة:", reply_markup=_lang_selector(int(uid))
+                )
 
         elif data.startswith("admin_delete_"):
             uid = data.replace("admin_delete_", "")
@@ -199,7 +239,8 @@ def create_app(token: str, admin_id: int):
 
     admin_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_callback, pattern="^admin_"
-            r"(add|stats|users|users_page_\d+|toggle_\d+|delete_\d+|"
+            r"(add|stats|users|users_page_\d+|stop_\d+|activate_\d+|"
+            r"lang_\d+(?:_(?:ar|en))?|delete_\d+|"
             r"plan_\d+|setplan:|setplan_|back|noop|user_\d+)")],
         states={
             ASK_TELEGRAM_ID: [

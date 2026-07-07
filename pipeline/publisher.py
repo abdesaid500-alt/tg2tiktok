@@ -85,6 +85,17 @@ class GoogleDriveUploader:
 
         return f"https://drive.google.com/uc?export=download&confirm=t&id={file_id}"
 
+    def delete(self, file_id: str) -> bool:
+        if not self._service:
+            self._build_service()
+        try:
+            self._service.files().delete(fileId=file_id).execute()
+            logger.info("Deleted file %s from Drive", file_id)
+            return True
+        except Exception as e:
+            logger.warning("Failed to delete file %s: %s", file_id, e)
+            return False
+
 
 class WoopSocialPublisher:
     def __init__(self, api_key: str, project_id: str, account_id: str):

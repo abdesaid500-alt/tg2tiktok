@@ -15,6 +15,10 @@ from pipeline.worker import Worker
 
 logger = logging.getLogger(__name__)
 
+(
+    ONBOARDING_LANG, ONBOARDING_SPEED, ONBOARDING_SPLIT, ONBOARDING_INTERVAL,
+) = range(100, 104)
+
 YT_PATTERN = re.compile(
     r"(https?://)?(www\.)?(youtube\.com|youtu\.be|m\.youtube\.com)/"
 )
@@ -64,28 +68,19 @@ def create_app(token: str, worker: Worker):
 
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid = update.effective_user.id
-        lang = "ar"
         users = await store.get("users")
         u_data = users.get(str(uid))
         if not u_data:
-            now = time.time()
-            pp = PLANS["trial"]
-            user = User(
-                telegram_id=uid,
-                plan="trial",
-                created_at=now,
-                expires_at=now + pp.duration_days * 86400,
-                username=update.effective_user.full_name or str(uid),
-                language=lang,
-            )
-            users[str(uid)] = user.__dict__
-            await store.save("users")
-            expires = time.strftime("%Y-%m-%d", time.localtime(user.expires_at))
+            context.user_data["onboarding_uid"] = uid
+            context.user_data["onboarding_user"] = update.effective_user.full_name or str(uid)
             await update.message.reply_text(
-                t(lang, "user_created", plan=t(lang, "plan_trial"), date=expires),
-                reply_markup=_build_main_keyboard(lang),
+                "🎬 أهلاً بك في TG2TikTok!\n\nسنساعدك في ضبط الإعدادات بسرعة.\nاختر اللغة أولاً:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🇸🇦 العربية", callback_data="ob_lang_ar"),
+                     InlineKeyboardButton("🇬🇧 English", callback_data="ob_lang_en")],
+                ]),
             )
-            return
+            return ONBOARDING_LANG
         user = User(**u_data)
         lang = user.language
         text = t(lang, "start")
@@ -95,6 +90,7 @@ def create_app(token: str, worker: Worker):
             text += f"\n\n{t(lang, 'account_plan', plan=t(lang, f'plan_{user.plan}'))}\n"
             text += t(lang, "account_expires", date=expires)
         await update.message.reply_text(text, reply_markup=_build_main_keyboard(lang))
+        return ConversationHandler.END
 
     async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid = update.effective_user.id
@@ -149,6 +145,101 @@ def create_app(token: str, worker: Worker):
                 speed=str(user.speed), split=str(user.split_minutes),
                 schedule=str(user.schedule_interval))
         await update.message.reply_text(msg, reply_markup=_build_main_keyboard(lang))
+
+    async def onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        data = query.data
+        uid = context.user_data.get("onboarding_uid", update.effective_user.id)
+
+        if data == "ob_lang_ar":
+            context.user_data["ob_lang"] = "ar"
+            await query.edit_message_text(
+                "⚡ اختر سرعة التشغيل:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("1.0x", callback_data="ob_speed_1.0"),
+                     InlineKeyboardButton("1.1x", callback_data="ob_speed_1.1")],
+                    [InlineKeyboardButton("1.5x", callback_data="ob_speed_1.5"),
+                     InlineKeyboardButton("2.0x", callback_data="ob_speed_2.0")],
+                ]),
+            )
+            return ONBOARDING_SPEED
+
+        elif data == "ob_lang_en":
+            context.user_data["ob_lang"] = "en"
+            await query.edit_message_text(
+                "⚡ Choose playback speed:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("1.0x", callback_data="ob_speed_1.0"),
+                     InlineKeyboardButton("1.1x", callback_data="ob_speed_1.1")],
+                    [InlineKeyboardButton("1.5x", callback_data="ob_speed_1.5"),
+                     InlineKeyboardButton("2.0x", callback_data="ob_speed_2.0")],
+                ]),
+            )
+            return ONBOARDING_SPEED
+
+        elif data.startswith("ob_speed_"):
+            val = float(data.replace("ob_speed_", ""))
+            context.user_data["ob_speed"] = val
+            lang = context.user_data.get("ob_lang", "ar")
+            text = t(lang, "onboarding_split")
+            await query.edit_message_text(
+                text,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("1", callback_data="ob_split_1"),
+                     InlineKeyboardButton("3", callback_data="ob_split_3"),
+                     InlineKeyboardButton("5", callback_data="ob_split_5"),
+                     InlineKeyboardButton("10", callback_data="ob_split_10")],
+                ]),
+            )
+            return ONBOARDING_SPLIT
+
+        elif data.startswith("ob_split_"):
+            val = int(data.replace("ob_split_", ""))
+            context.user_data["ob_split"] = val
+            lang = context.user_data.get("ob_lang", "ar")
+            text = t(lang, "onboarding_interval")
+            await query.edit_message_text(
+                text,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("30", callback_data="ob_interval_30"),
+                     InlineKeyboardButton("60", callback_data="ob_interval_60"),
+                     InlineKeyboardButton("120", callback_data="ob_interval_120"),
+                     InlineKeyboardButton("240", callback_data="ob_interval_240")],
+                ]),
+            )
+            return ONBOARDING_INTERVAL
+
+        elif data.startswith("ob_interval_"):
+            val = int(data.replace("ob_interval_", ""))
+            context.user_data["ob_interval"] = val
+            lang = context.user_data.get("ob_lang", "ar")
+            speed = context.user_data["ob_speed"]
+            split_min = context.user_data["ob_split"]
+            interval = context.user_data["ob_interval"]
+
+            now = time.time()
+            pp = PLANS["trial"]
+            user = User(
+                telegram_id=uid,
+                plan="trial",
+                created_at=now,
+                expires_at=now + pp.duration_days * 86400,
+                username=context.user_data.get("onboarding_user", str(uid)),
+                language=lang,
+                speed=speed,
+                split_minutes=split_min,
+                schedule_interval=interval,
+            )
+            users = await store.get("users")
+            users[str(uid)] = user.__dict__
+            await store.save("users")
+
+            await query.edit_message_text(
+                t(lang, "onboarding_done"),
+                reply_markup=_build_main_keyboard(lang),
+            )
+            return ConversationHandler.END
 
     async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -293,7 +384,18 @@ def create_app(token: str, worker: Worker):
                 reply_markup=_build_settings_keyboard(lang, user),
             )
 
-    app.add_handler(CommandHandler("start", start))
+    onboarding_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            ONBOARDING_LANG: [CallbackQueryHandler(onboarding_callback, pattern="^ob_lang_")],
+            ONBOARDING_SPEED: [CallbackQueryHandler(onboarding_callback, pattern="^ob_speed_")],
+            ONBOARDING_SPLIT: [CallbackQueryHandler(onboarding_callback, pattern="^ob_split_")],
+            ONBOARDING_INTERVAL: [CallbackQueryHandler(onboarding_callback, pattern="^ob_interval_")],
+        },
+        fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
+    )
+
+    app.add_handler(onboarding_handler)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(callback_handler, pattern="^("
         "main_menu|settings|my_queue|cancel_queue|my_account|my_schedule|help|"
