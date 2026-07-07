@@ -172,6 +172,7 @@ def _run_ffmpeg(
         "-t", str(t),
         "-vf",
         f"setpts={1/speed}*PTS,"
+        f"scale=360:360:force_original_aspect_ratio=increase,"
         f"scale=min(1080\\,iw):min(1920\\,ih)"
         f":force_original_aspect_ratio=decrease,setsar=1",
         "-avoid_negative_ts", "make_zero",
