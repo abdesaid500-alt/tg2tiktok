@@ -195,9 +195,13 @@ class WoopSocialPublisher:
                     return True, ""
                 try:
                     body = resp.json()
-                    last_err = body.get("message") or body.get("code") or resp.text[:300]
+                    ve = body.get("validationErrors")
+                    if ve:
+                        last_err = f"validation failed: {ve}"
+                    else:
+                        last_err = body.get("message") or body.get("code") or resp.text[:400]
                 except Exception:
-                    last_err = resp.text[:300]
+                    last_err = resp.text[:400]
                 logger.warning(
                     "WoopSocial post attempt %d: %s %s",
                     attempt, resp.status_code, last_err,
