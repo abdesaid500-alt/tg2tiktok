@@ -230,9 +230,14 @@ class Worker:
             publisher = self._get_publisher(user)
 
             media_ids = []
-            for dl_url in drive_urls:
+            for i, dl_url in enumerate(drive_urls):
                 media_id = publisher.upload_media(dl_url)
                 media_ids.append(media_id)
+                if not media_id:
+                    logger.warning("Upload part %d failed for user %d", i, uid)
+                else:
+                    logger.info("Part %d uploaded to WoopSocial: media_id=%s", i, media_id)
+                    time.sleep(3)
 
             interval = user.schedule_interval
             now = datetime.utcnow()
