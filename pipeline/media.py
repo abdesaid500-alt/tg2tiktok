@@ -45,8 +45,10 @@ async def download_video(
             "yt-dlp",
             "--force-ipv4",
             "--no-playlist",
+            "--print", "after_move:%(title)s",
+            "--print", "after_move:%(duration)s",
+            "--print", "after_move:%(filename)s",
             "-o", output_template,
-            "--print", "after_move:%(title)s|%(duration)s|%(filename)s",
         ]
         if cookies_b64:
             cmd.extend(["--cookies", cookies_file])
@@ -65,11 +67,15 @@ async def download_video(
                 raise PermissionError("COOKIES_EXPIRED")
             raise RuntimeError(f"yt-dlp failed: {err[-300:]}")
 
-        out = result.stdout.strip().split("\n")[0].strip()
-        parts = out.split("|")
-        title = parts[0] if len(parts) > 0 else "Unknown"
-        duration = float(parts[1]) if len(parts) > 1 and parts[1] != "NA" else 0
-        fname = parts[2] if len(parts) > 2 else ""
+        lines = result.stdout.strip().split("\n")
+        title = lines[0] if len(lines) > 0 else "Unknown"
+        duration = 0.0
+        if len(lines) > 1:
+            try:
+                duration = float(lines[1]) if lines[1] not in ("NA", "") else 0.0
+            except (ValueError, TypeError):
+                duration = 0.0
+        fname = lines[2] if len(lines) > 2 else ""
 
         if not fname or not os.path.exists(fname):
             for f in os.listdir(output_dir):
@@ -122,7 +128,11 @@ async def split_and_speed(
              "-show_format", "-show_streams", input_path],
             capture_output=True, text=True, timeout=30,
         )
-        info = json.loads(probe.stdout)
+        info = {}
+        try:
+            info = json.loads(probe.stdout) if probe.stdout.strip() else {}
+        except json.JSONDecodeError:
+            pass
 
         total_dur = 0.0
         fmt = info.get("format", {})
@@ -203,10 +213,21 @@ def _run_ffmpeg(
 
 def _get_duration(path: str) -> float:
     r = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", path],
+        ["ffprobe", "-v", "quiet", "-print_format", "json",
+         "-show_format", "-show_streams", path],
         capture_output=True, text=True, timeout=30,
     )
-    return float(json.loads(r.stdout)["format"]["duration"])
+    try:
+        info = json.loads(r.stdout) if r.stdout.strip() else {}
+    except json.JSONDecodeError:
+        info = {}
+    fmt = info.get("format", {})
+    if "duration" in fmt:
+        return float(fmt["duration"])
+    for s in info.get("streams", []):
+        if s.get("codec_type") == "video" and "duration" in s:
+            return float(s["duration"])
+    return 0.0
 
 
 async def create_bumper(output_dir: str) -> str:
