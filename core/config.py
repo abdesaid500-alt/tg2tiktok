@@ -14,6 +14,8 @@ class Settings:
     yt_cookies_b64: str
     yt_po_token: Optional[str] = None
     yt_visitor_data: Optional[str] = None
+    supabase_url: str = ""
+    supabase_service_key: str = ""
     data_dir: str = "data"
     temp_dir: str = "temp_videos"
     port: int = 8080
@@ -30,6 +32,8 @@ class Settings:
             yt_cookies_b64=os.environ.get("YT_COOKIES_B64", ""),
             yt_po_token=os.environ.get("YT_PO_TOKEN"),
             yt_visitor_data=os.environ.get("YT_VISITOR_DATA"),
+            supabase_url=os.environ.get("SUPABASE_URL", ""),
+            supabase_service_key=os.environ.get("SUPABASE_SERVICE_KEY", ""),
             data_dir=os.environ.get("DATA_DIR", "data"),
             temp_dir=os.environ.get("TEMP_DIR", "temp_videos"),
             port=int(os.environ.get("PORT", 8080)),

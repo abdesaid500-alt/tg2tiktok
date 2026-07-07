@@ -59,7 +59,11 @@ def main():
         logger.error("Missing env var: %s", e)
         sys.exit(1)
 
-    storage.init(settings.data_dir)
+    storage.init(
+        settings.data_dir,
+        supabase_url=settings.supabase_url,
+        supabase_key=settings.supabase_service_key,
+    )
     os.makedirs(settings.temp_dir, exist_ok=True)
 
     notifier = _TgNotifier()
@@ -86,6 +90,7 @@ def main():
             await admin_app.stop()
             await user_app.shutdown()
             await admin_app.shutdown()
+            await storage.close()
 
     asyncio.run(runner())
 
