@@ -123,7 +123,18 @@ async def split_and_speed(
             capture_output=True, text=True, timeout=30,
         )
         info = json.loads(probe.stdout)
-        total_dur = float(info["format"]["duration"])
+
+        total_dur = 0.0
+        fmt = info.get("format", {})
+        if "duration" in fmt:
+            total_dur = float(fmt["duration"])
+        else:
+            for s in info.get("streams", []):
+                if s.get("codec_type") == "video" and "duration" in s:
+                    total_dur = max(total_dur, float(s["duration"]))
+        if total_dur <= 0:
+            total_dur = _get_duration(input_path)
+
         has_audio = any(
             s.get("codec_type") == "audio" for s in info.get("streams", [])
         )
