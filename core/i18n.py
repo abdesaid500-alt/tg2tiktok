@@ -77,6 +77,10 @@ L = {
         "delete_after_publish": "🗑️ الحذف من Drive: @status",
         "delete_enabled": "مفعل (30 دقيقة بعد النشر)",
         "delete_disabled": "معطل",
+        "free_trial_welcome": "🎬 أهلاً بك! لك @limit جزء مجاني لتجربة البوت.",
+        "free_trial_remaining": "⚡ تبقى لك @remaining جزء مجاني من @limit",
+        "free_trial_expired": "⚠️ انتهت الأجزاء المجانية! اشترك لمواصلة النشر.",
+        "free_trial_limit": "مجاني (@limit جزء)",
     },
     "en": {
         "start": "Welcome to TG2TikTok! 🎬\nSend a YouTube link to convert it into TikTok posts.",
@@ -156,6 +160,10 @@ L = {
         "delete_after_publish": "🗑️ Drive deletion: @status",
         "delete_enabled": "Enabled (30 min after publish)",
         "delete_disabled": "Disabled",
+        "free_trial_welcome": "🎬 Welcome! You have @limit free parts to try the bot.",
+        "free_trial_remaining": "⚡ @remaining of @limit free parts remaining",
+        "free_trial_expired": "⚠️ Free trial expired! Subscribe to continue publishing.",
+        "free_trial_limit": "Free (@limit parts)",
     },
 }
 

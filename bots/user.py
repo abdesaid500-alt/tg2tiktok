@@ -8,7 +8,7 @@ from telegram.ext import (
     filters, ContextTypes, ConversationHandler,
 )
 
-from core.models import User, PLANS
+from core.models import User, PLANS, FREE_PARTS_LIMIT
 from core import storage as store
 from core.i18n import t
 from pipeline.worker import Worker
@@ -74,7 +74,9 @@ def create_app(token: str, worker: Worker):
             context.user_data["onboarding_uid"] = uid
             context.user_data["onboarding_user"] = update.effective_user.full_name or str(uid)
             await update.message.reply_text(
-                "🎬 أهلاً بك في TG2TikTok!\n\nسنساعدك في ضبط الإعدادات بسرعة.\nاختر اللغة أولاً:",
+                f"🎬 أهلاً بك في TG2TikTok!\n\n"
+                f"🚀 لك {FREE_PARTS_LIMIT} جزء مجاني لتجربة البوت!\n"
+                f"سنساعدك في ضبط الإعدادات بسرعة.\nاختر اللغة أولاً:",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🇸🇦 العربية", callback_data="ob_lang_ar"),
                      InlineKeyboardButton("🇬🇧 English", callback_data="ob_lang_en")],
@@ -128,7 +130,7 @@ def create_app(token: str, worker: Worker):
                 await update.message.reply_text(t(lang, "not_active"))
             elif result == "no_api_key":
                 await update.message.reply_text(
-                    "❌ حساب WoopSocial غير مكتمل. تواصل مع الدعم."
+                    "❌ انتهت الأجزاء المجانية! تواصل مع الدعم للاشتراك في خطة مدفوعة."
                 )
             elif result == "queue_full":
                 pp = user.plan_params()

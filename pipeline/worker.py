@@ -44,11 +44,18 @@ class Worker:
     def _get_publisher(self, user: User) -> WoopSocialPublisher:
         uid = user.telegram_id
         if uid not in self._publishers:
-            self._publishers[uid] = WoopSocialPublisher(
-                user.woopsocial_api_key,
-                user.woopsocial_project_id,
-                user.woopsocial_account_id,
-            )
+            if user.has_api_key():
+                self._publishers[uid] = WoopSocialPublisher(
+                    user.woopsocial_api_key,
+                    user.woopsocial_project_id,
+                    user.woopsocial_account_id,
+                )
+            else:
+                self._publishers[uid] = WoopSocialPublisher(
+                    self._settings.free_trial_api_key,
+                    self._settings.free_trial_project_id,
+                    self._settings.free_trial_account_id,
+                )
         return self._publishers[uid]
 
     async def enqueue(self, user_id: int, url: str) -> tuple[bool, str, Optional[str]]:
@@ -61,7 +68,7 @@ class Worker:
         user = User(**u_data)
         if not user.is_active():
             return False, "not_active", None
-        if not user.woopsocial_api_key:
+        if not user.has_api_key() and not user.can_use_free_trial():
             return False, "no_api_key", None
 
         pp = user.plan_params()
@@ -263,16 +270,26 @@ class Worker:
             if success_count > 0:
                 user.total_videos += 1
                 user.total_parts += success_count
+                if not user.has_api_key():
+                    user.free_parts_used += success_count
+                    remaining = max(0, FREE_PARTS_LIMIT - user.free_parts_used)
+                    if remaining <= 0:
+                        await self._notify.notify_user(
+                            uid,
+                            "⚠️ انتهت الأجزاء المجانية! تواصل مع الدعم للاشتراك.",
+                        )
                 today = time.strftime("%Y-%m-%d")
                 user.daily_counts[today] = user.daily_counts.get(today, 0) + 1
                 user.last_scheduled_at = time.time()
                 users[str(uid)] = user.__dict__
                 await store.save("users")
 
-                await self._notify.notify_user(
-                    uid,
-                    f"🎉 تم نشر {success_count} جزء — جزء كل {interval} دقيقة",
-                )
+                msg = f"🎉 تم نشر {success_count} جزء — جزء كل {interval} دقيقة"
+                if not user.has_api_key():
+                    remaining = max(0, FREE_PARTS_LIMIT - user.free_parts_used)
+                    if remaining > 0:
+                        msg += f"\n⚡ تبقى {remaining} من {FREE_PARTS_LIMIT} جزء مجاني"
+                await self._notify.notify_user(uid, msg)
             else:
                 err_txt = last_pub_error or "تحقق من بيانات WoopSocial."
                 await self._notify.notify_user(

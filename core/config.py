@@ -16,6 +16,9 @@ class Settings:
     yt_visitor_data: Optional[str] = None
     supabase_url: str = ""
     supabase_service_key: str = ""
+    free_trial_api_key: str = ""
+    free_trial_project_id: str = ""
+    free_trial_account_id: str = ""
     data_dir: str = "data"
     temp_dir: str = "temp_videos"
     port: int = 8080
@@ -34,6 +37,9 @@ class Settings:
             yt_visitor_data=os.environ.get("YT_VISITOR_DATA"),
             supabase_url=os.environ.get("SUPABASE_URL", ""),
             supabase_service_key=os.environ.get("SUPABASE_SERVICE_KEY", ""),
+            free_trial_api_key=os.environ.get("FREE_TRIAL_API_KEY", ""),
+            free_trial_project_id=os.environ.get("FREE_TRIAL_PROJECT_ID", ""),
+            free_trial_account_id=os.environ.get("FREE_TRIAL_ACCOUNT_ID", ""),
             data_dir=os.environ.get("DATA_DIR", "data"),
             temp_dir=os.environ.get("TEMP_DIR", "temp_videos"),
             port=int(os.environ.get("PORT", 8080)),

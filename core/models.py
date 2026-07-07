@@ -19,6 +19,9 @@ PLANS = {
 }
 
 
+FREE_PARTS_LIMIT = 15
+
+
 @dataclass
 class User:
     telegram_id: int
@@ -36,6 +39,7 @@ class User:
     schedule_interval: int = 15
     total_videos: int = 0
     total_parts: int = 0
+    free_parts_used: int = 0
     last_active: float = 0.0
     last_scheduled_at: Optional[float] = None
     daily_counts: dict = field(default_factory=dict)
@@ -45,7 +49,15 @@ class User:
             return False
         if time.time() > self.expires_at:
             return False
+        if not self.woopsocial_api_key and self.free_parts_used >= FREE_PARTS_LIMIT:
+            return False
         return True
+
+    def has_api_key(self) -> bool:
+        return bool(self.woopsocial_api_key)
+
+    def can_use_free_trial(self) -> bool:
+        return not self.has_api_key() and self.free_parts_used < FREE_PARTS_LIMIT
 
     def plan_params(self) -> PlanParams:
         return PLANS.get(self.plan, PLANS["trial"])
