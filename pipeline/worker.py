@@ -44,18 +44,11 @@ class Worker:
     def _get_publisher(self, user: User) -> WoopSocialPublisher:
         uid = user.telegram_id
         if uid not in self._publishers:
-            if user.has_api_key():
-                self._publishers[uid] = WoopSocialPublisher(
-                    user.woopsocial_api_key,
-                    user.woopsocial_project_id,
-                    user.woopsocial_account_id,
-                )
-            else:
-                self._publishers[uid] = WoopSocialPublisher(
-                    self._settings.free_trial_api_key,
-                    self._settings.free_trial_project_id,
-                    self._settings.free_trial_account_id,
-                )
+            self._publishers[uid] = WoopSocialPublisher(
+                user.woopsocial_api_key,
+                user.woopsocial_project_id,
+                user.woopsocial_account_id,
+            )
         return self._publishers[uid]
 
     async def enqueue(self, user_id: int, url: str) -> tuple[bool, str, Optional[str]]:
@@ -223,78 +216,84 @@ class Worker:
             )
             item.parts = parts
 
-            await self._notify.notify_user(uid, f"☁️ جاري الرفع... ({len(parts)} أجزاء)")
+            user.total_videos += 1
+            user.total_parts += len(parts)
+            user.free_parts_used += len(parts)
+            today = time.strftime("%Y-%m-%d")
+            user.daily_counts[today] = user.daily_counts.get(today, 0) + 1
+            users[str(uid)] = user.__dict__
+            await store.save("users")
 
-            drive = self._get_drive()
+            if user.has_api_key():
+                await self._notify.notify_user(uid, f"☁️ جاري الرفع... ({len(parts)} أجزاء)")
 
-            drive_urls = []
-            for p in parts:
-                url = drive.upload(p)
-                drive_urls.append(url)
+                drive = self._get_drive()
 
-            await self._notify.notify_user(uid, "📤 جاري الجدولة على تيكتوك...")
+                drive_urls = []
+                for p in parts:
+                    url = drive.upload(p)
+                    drive_urls.append(url)
 
-            publisher = self._get_publisher(user)
+                await self._notify.notify_user(uid, "📤 جاري الجدولة على تيكتوك...")
 
-            media_ids = []
-            for i, dl_url in enumerate(drive_urls):
-                media_id = publisher.upload_media(dl_url)
-                media_ids.append(media_id)
-                if not media_id:
-                    logger.warning("Upload part %d failed for user %d", i, uid)
+                publisher = self._get_publisher(user)
+
+                media_ids = []
+                for i, dl_url in enumerate(drive_urls):
+                    media_id = publisher.upload_media(dl_url)
+                    media_ids.append(media_id)
+                    if not media_id:
+                        logger.warning("Upload part %d failed for user %d", i, uid)
+                    else:
+                        logger.info("Part %d uploaded to WoopSocial: media_id=%s", i, media_id)
+                        time.sleep(3)
+
+                interval = user.schedule_interval
+                now = datetime.utcnow()
+                success_count = 0
+                buffer_minutes = 5
+                last_pub_error = ""
+
+                for i, media_id in enumerate(media_ids):
+                    if not media_id:
+                        continue
+                    offset = buffer_minutes + (i * interval)
+                    schedule_at = (now + timedelta(minutes=offset)).isoformat()
+                    title_short = item.video_title[:50] if item.video_title else "فيديو"
+                    caption = f"{title_short} | {i + 1}/{len(parts)}"
+
+                    ok, err = publisher.schedule_post(media_id, schedule_at, caption)
+                    if ok:
+                        success_count += 1
+                        self._schedule_drive_deletion(drive_urls[i])
+                    elif err:
+                        last_pub_error = err
+
+                if success_count > 0:
+                    msg = f"🎉 تم نشر {success_count} جزء — جزء كل {interval} دقيقة"
+                    await self._notify.notify_user(uid, msg)
                 else:
-                    logger.info("Part %d uploaded to WoopSocial: media_id=%s", i, media_id)
-                    time.sleep(3)
-
-            interval = user.schedule_interval
-            now = datetime.utcnow()
-            success_count = 0
-            buffer_minutes = 5
-            last_pub_error = ""
-
-            for i, media_id in enumerate(media_ids):
-                if not media_id:
-                    continue
-                offset = buffer_minutes + (i * interval)
-                schedule_at = (now + timedelta(minutes=offset)).isoformat()
-                title_short = item.video_title[:50] if item.video_title else "فيديو"
-                caption = f"{title_short} | {i + 1}/{len(parts)}"
-
-                ok, err = publisher.schedule_post(media_id, schedule_at, caption)
-                if ok:
-                    success_count += 1
-                    self._schedule_drive_deletion(drive_urls[i])
-                elif err:
-                    last_pub_error = err
-
-            if success_count > 0:
-                user.total_videos += 1
-                user.total_parts += success_count
-                if not user.has_api_key():
-                    user.free_parts_used += success_count
-                    remaining = max(0, FREE_PARTS_LIMIT - user.free_parts_used)
-                    if remaining <= 0:
-                        await self._notify.notify_user(
-                            uid,
-                            "⚠️ انتهت الأجزاء المجانية! تواصل مع الدعم للاشتراك.",
-                        )
-                today = time.strftime("%Y-%m-%d")
-                user.daily_counts[today] = user.daily_counts.get(today, 0) + 1
-                user.last_scheduled_at = time.time()
-                users[str(uid)] = user.__dict__
-                await store.save("users")
-
-                msg = f"🎉 تم نشر {success_count} جزء — جزء كل {interval} دقيقة"
-                if not user.has_api_key():
-                    remaining = max(0, FREE_PARTS_LIMIT - user.free_parts_used)
-                    if remaining > 0:
-                        msg += f"\n⚡ تبقى {remaining} من {FREE_PARTS_LIMIT} جزء مجاني"
-                await self._notify.notify_user(uid, msg)
+                    err_txt = last_pub_error or "تحقق من بيانات WoopSocial."
+                    await self._notify.notify_user(
+                        uid, f"❌ فشل النشر على تيكتوك:\n{err_txt[:200]}"
+                    )
             else:
-                err_txt = last_pub_error or "تحقق من بيانات WoopSocial."
-                await self._notify.notify_user(
-                    uid, f"❌ فشل النشر على تيكتوك:\n{err_txt[:200]}"
+                remaining = max(0, FREE_PARTS_LIMIT - user.free_parts_used)
+                msg = f"✅ تم تجهيز {len(parts)} جزء من الفيديو!"
+                plans_text = (
+                    "\n\n━━━ 📋 خطط الاشتراك ━━━\n"
                 )
+                from core.models import PLANS
+                for key, pp in PLANS.items():
+                    name = {"trial": "تجريبي", "basic": "أساسي", "pro": "احترافي", "unlimited": "غير محدود"}.get(key, key)
+                    plans_text += f"\n• {name}: {pp.daily_limit} فيديو/يوم | {pp.queue_limit} طابور | {pp.duration_days} يوم"
+                msg += plans_text
+                msg += "\n\n💬 تواصل مع الدعم للاشتراك"
+                if remaining > 0:
+                    msg += f"\n⚡ تبقى لك {remaining} من {FREE_PARTS_LIMIT} جزء مجاني للتجربة"
+                else:
+                    msg += "\n⚠️ انتهت الأجزاء المجانية"
+                await self._notify.notify_user(uid, msg)
 
         except PermissionError:
             await self._notify.notify_user(

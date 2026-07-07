@@ -129,8 +129,15 @@ def create_app(token: str, worker: Worker):
             if result == "not_active":
                 await update.message.reply_text(t(lang, "not_active"))
             elif result == "no_api_key":
+                from core.models import PLANS
+                plans_text = "\n".join(
+                    f"• {pp.name}: {pp.daily_limit} فيديو/يوم | {pp.duration_days} يوم"
+                    for pp in PLANS.values()
+                )
                 await update.message.reply_text(
-                    "❌ انتهت الأجزاء المجانية! تواصل مع الدعم للاشتراك في خطة مدفوعة."
+                    f"❌ انتهت الأجزاء المجانية!\n\n"
+                    f"━━━ 📋 خطط الاشتراك ━━━\n{plans_text}\n\n"
+                    f"💬 تواصل مع الدعم للاشتراك"
                 )
             elif result == "queue_full":
                 pp = user.plan_params()
