@@ -296,43 +296,33 @@ class Worker:
                     drive_urls.append(url)
                 logger.info("Drive uploads done in %.1fs for %d parts", time.time() - t0, len(parts))
 
-                await self._notify.notify_user(uid, "📤 جاري الرفع على ووب سوشل...")
-
-                # --- 2. رفع WoopSocial — متوازي (max 3) ---
-                sem = asyncio.Semaphore(3)
-                async def _upload_one(dl_url: str, idx: int) -> Optional[str]:
-                    async with sem:
-                        logger.info("WoopSocial start part %d/%d for user %d", idx + 1, len(drive_urls), uid)
-                        mid = await asyncio.to_thread(publisher.upload_media, dl_url)
-                        if mid:
-                            logger.info("WoopSocial part %d OK: media_id=%s", idx + 1, mid)
-                        else:
-                            logger.error("WoopSocial part %d FAILED after 5 retries", idx + 1)
-                        return mid
-
-                t0 = time.time()
-                ws_tasks = [_upload_one(url, i) for i, url in enumerate(drive_urls)]
-                ws_results = await asyncio.gather(*ws_tasks, return_exceptions=True)
-                logger.info("WoopSocial uploads done in %.1fs", time.time() - t0)
-
+                # --- 2. رفع WoopSocial — تسلسلي (يمنع تعارض الميديا + فيديو التقدم) ---
                 media_ids = []
                 failed_indices = []
-                for i, r in enumerate(ws_results):
-                    if isinstance(r, Exception) or not r:
-                        failed_indices.append(i)
-                        media_ids.append(None)
-                        logger.error("WoopSocial part %d FAILED: %s", i + 1, r)
+                t0 = time.time()
+                for i, dl_url in enumerate(drive_urls):
+                    await self._notify.notify_user(
+                        uid, f"📤 الرفع على ووب سوشل... ({i + 1}/{len(drive_urls)})"
+                    )
+                    mid = await asyncio.to_thread(publisher.upload_media, dl_url)
+                    if mid:
+                        media_ids.append(mid)
+                        logger.info("WoopSocial part %d OK: media_id=%s", i + 1, mid)
                     else:
-                        media_ids.append(r)
+                        media_ids.append(None)
+                        failed_indices.append(i)
+                        logger.error("WoopSocial part %d FAILED after 5 retries", i + 1)
+                logger.info("WoopSocial uploads done in %.1fs — %d/%d OK", time.time() - t0, len(media_ids) - len(failed_indices), len(drive_urls))
 
-                # --- 3. جدولة تيكتوك — متوازي (للأجزاء الناجحة فقط) ---
+                # --- 3. جدولة تيكتوك — تسلسلي (يمنع استبدال البوستات السابقة) ---
                 interval = user.schedule_interval
                 now = datetime.utcnow()
                 buffer_minutes = 5
 
                 valid_indices = [i for i, mid in enumerate(media_ids) if mid]
-
-                async def _schedule_one(i: int) -> bool:
+                success_count = 0
+                t0 = time.time()
+                for i in valid_indices:
                     media_id = media_ids[i]
                     offset = buffer_minutes + (i * interval)
                     schedule_at = (now + timedelta(minutes=offset)).isoformat()
@@ -341,16 +331,11 @@ class Worker:
                     ok, err = await asyncio.to_thread(publisher.schedule_post, media_id, schedule_at, caption)
                     if ok:
                         self._schedule_drive_deletion(drive_urls[i])
-                        return True
-                    logger.error("Schedule failed for part %d: %s", i + 1, err)
-                    return False
-
-                t0 = time.time()
-                sched_results = await asyncio.gather(
-                    *[_schedule_one(i) for i in valid_indices],
-                    return_exceptions=True,
-                )
-                success_count = sum(1 for r in sched_results if r is True)
+                        success_count += 1
+                        logger.info("Scheduled part %d OK — %d/%d posted", i + 1, success_count, len(valid_indices))
+                    else:
+                        logger.error("Schedule failed for part %d: %s", i + 1, err)
+                    await asyncio.sleep(3)  # delay بين البوستات لتفادي سباق WoopSocial
                 logger.info("Scheduling done in %.1fs — %d succeeded", time.time() - t0, success_count)
 
                 # --- 4. إرسال النتيجة للمستخدم ---
