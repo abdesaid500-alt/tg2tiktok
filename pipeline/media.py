@@ -160,7 +160,7 @@ async def split_and_speed(
         idx = 1
 
         while start < total_dur:
-            dur = chunk + overlap
+            dur = chunk
             if start + dur > total_dur:
                 dur = total_dur - start
 
