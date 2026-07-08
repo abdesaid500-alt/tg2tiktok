@@ -280,6 +280,9 @@ class Worker:
                 drive = self._get_drive()
                 publisher = self._get_publisher(user)
 
+                # --- 0. Cleanup old WoopSocial media to free storage ---
+                await asyncio.to_thread(publisher.cleanup_media_storage)
+
                 # --- 1. رفع Drive — تسلسلي (يمنع OOM + SSL pool corruption) ---
                 t0 = time.time()
                 drive_urls = []
@@ -380,6 +383,10 @@ class Worker:
                         "user_id": uid,
                         "youtube_url": item.youtube_url,
                     }
+                    # Cleanup orphaned media from WoopSocial
+                    for i, mid in enumerate(media_ids):
+                        if mid:
+                            await asyncio.to_thread(publisher.delete_media, mid)
                     await self._notify.notify_user_markup(uid, "\n".join(msg_parts), markup)
             else:
                 remaining = max(0, FREE_PARTS_LIMIT - user.free_parts_used)

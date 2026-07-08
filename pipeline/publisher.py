@@ -169,6 +169,46 @@ class WoopSocialPublisher:
         self._account_id = account_id
         self._base = "https://api.woopsocial.com/v1"
 
+    def delete_media(self, media_id: str) -> bool:
+        try:
+            resp = requests.delete(
+                f"{self._base}/media/{media_id}",
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                timeout=30,
+            )
+            if resp.status_code == 204:
+                logger.info("WoopSocial deleted media %s", media_id)
+                return True
+            logger.warning("WoopSocial delete %s: %s %s", media_id, resp.status_code, resp.text[:200])
+            return False
+        except Exception as e:
+            logger.warning("WoopSocial delete %s error: %s", media_id, e)
+            return False
+
+    def cleanup_media_storage(self, older_than_minutes: int = 60, keep_at_least: int = 20):
+        try:
+            resp = requests.get(
+                f"{self._base}/media",
+                params={"projectId": self._project_id, "limit": 100},
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                timeout=30,
+            )
+            if resp.status_code != 200:
+                return
+            items = resp.json().get("media", [])
+            if len(items) <= keep_at_least:
+                return
+            import datetime as _dt
+            cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=older_than_minutes)
+            old = [m for m in items if m.get("createdAt", "") < cutoff.isoformat()]
+            if not old:
+                return
+            for m in old:
+                self.delete_media(m["id"])
+            logger.info("WoopSocial cleanup: deleted %d media older than %dmin (%d total)", len(old), older_than_minutes, len(items))
+        except Exception as e:
+            logger.warning("WoopSocial cleanup error: %s", e)
+
     def upload_media(self, file_url: str) -> Optional[str]:
         import requests
         import os as _os
