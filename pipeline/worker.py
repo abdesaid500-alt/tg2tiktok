@@ -235,7 +235,11 @@ class Worker:
 
                 # --- 1. رفع Drive — متوازي ---
                 t0 = time.time()
-                drive_tasks = [asyncio.to_thread(drive.upload, p) for p in parts]
+                async def _drive_upload_with_timeout(p: str) -> str:
+                    return await asyncio.wait_for(
+                        asyncio.to_thread(drive.upload, p), timeout=300,
+                    )
+                drive_tasks = [_drive_upload_with_timeout(p) for p in parts]
                 drive_results = await asyncio.gather(*drive_tasks, return_exceptions=True)
                 drive_urls = []
                 for i, r in enumerate(drive_results):
