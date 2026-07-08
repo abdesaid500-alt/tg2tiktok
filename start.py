@@ -24,6 +24,14 @@ class _TgNotifier:
         except Exception as e:
             logger.warning("Notify failed for %d: %s", user_id, e)
 
+    async def notify_user_markup(self, user_id: int, message: str, markup=None) -> None:
+        if not self.bot:
+            return
+        try:
+            await self.bot.send_message(chat_id=user_id, text=message, reply_markup=markup)
+        except Exception as e:
+            logger.warning("Notify markup failed for %d: %s", user_id, e)
+
 
 async def _health_server(port: int, stop: asyncio.Event):
     async def handle(reader, writer):

@@ -123,11 +123,11 @@ class WoopSocialPublisher:
             r.close()
             logger.info("Downloaded %d bytes to %s", total, tmp_path)
 
-            for attempt in range(1, 4):
+            for attempt in range(1, 6):
                 try:
                     file_size = _os.path.getsize(tmp_path)
                     logger.info(
-                        "WoopSocial upload attempt %d/3 — file=%s size=%d",
+                        "WoopSocial upload attempt %d/5 — file=%s size=%d",
                         attempt, tmp_path, file_size,
                     )
                     with open(tmp_path, "rb") as vf:
@@ -212,7 +212,7 @@ class WoopSocialPublisher:
             "Content-Type": "application/json",
         }
         last_err = ""
-        for attempt in range(1, 4):
+        for attempt in range(1, 6):
             try:
                 resp = requests.post(
                     f"{self._base}/posts",

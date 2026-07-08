@@ -265,6 +265,24 @@ def create_app(token: str, worker: Worker):
         user = User(**u_data)
         lang = user.language
 
+        if data.startswith("retry_"):
+            item_id = data.replace("retry_", "")
+            ok = await worker.retry_failed(item_id)
+            if ok:
+                await query.edit_message_text("🔄 تمت إعادة إضافة الفيديو للطابور.")
+            else:
+                await query.edit_message_text("❌ لم نعد نجد حالة الفيديو. ربما انتهت صلاحيتها.")
+            return
+
+        if data.startswith("skip_"):
+            item_id = data.replace("skip_", "")
+            await worker.skip_failed(item_id)
+            await query.edit_message_text(
+                "⏭️ تم تخطي الأجزاء الفاشلة.",
+                reply_markup=_build_main_keyboard(lang),
+            )
+            return
+
         if data == "main_menu":
             text = t(lang, "start")
             if user.plan:
@@ -408,6 +426,7 @@ def create_app(token: str, worker: Worker):
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(callback_handler, pattern="^("
         "main_menu|settings|my_queue|cancel_queue|my_account|my_schedule|help|"
-        "set_speed|speed_|set_split|split_|set_schedule|sched_"
+        "set_speed|speed_|set_split|split_|set_schedule|sched_|"
+        "retry_|skip_"
         ")"))
     return app

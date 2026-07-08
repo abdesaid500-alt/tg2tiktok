@@ -7,6 +7,8 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
 from core.config import Settings
 from core.models import User, QueueItem, PLANS
 from core import storage as store
@@ -31,6 +33,7 @@ class Worker:
         self._drive: Optional[GoogleDriveUploader] = None
         self._publishers: dict[int, WoopSocialPublisher] = {}
         self._pending_deletions: dict[str, float] = {}  # file_id -> delete_after_timestamp
+        self._failed_items: dict[str, dict] = {}  # item_id -> {user_id, youtube_url}
 
     def _get_drive(self) -> GoogleDriveUploader:
         if not self._drive:
@@ -228,57 +231,108 @@ class Worker:
                 await self._notify.notify_user(uid, f"☁️ جاري الرفع... ({len(parts)} أجزاء)")
 
                 drive = self._get_drive()
-
-                drive_urls = []
-                for p in parts:
-                    url = await asyncio.to_thread(drive.upload, p)
-                    drive_urls.append(url)
-
-                await self._notify.notify_user(uid, "📤 جاري الجدولة على تيكتوك...")
-
                 publisher = self._get_publisher(user)
 
-                media_ids = []
-                for i, dl_url in enumerate(drive_urls):
-                    logger.info("Starting upload part %d/%d for user %d", i + 1, len(drive_urls), uid)
-                    media_id = await asyncio.to_thread(publisher.upload_media, dl_url)
-                    media_ids.append(media_id)
-                    if not media_id:
-                        logger.error("Part %d upload FAILED for user %d", i, uid)
-                    else:
-                        logger.info("Part %d uploaded OK: media_id=%s", i + 1, media_id)
-                    if i < len(drive_urls) - 1:
-                        await asyncio.sleep(10)
+                # --- 1. رفع Drive — متوازي ---
+                t0 = time.time()
+                drive_tasks = [asyncio.to_thread(drive.upload, p) for p in parts]
+                drive_results = await asyncio.gather(*drive_tasks, return_exceptions=True)
+                drive_urls = []
+                for i, r in enumerate(drive_results):
+                    if isinstance(r, Exception):
+                        logger.error("Drive upload failed for part %d: %s", i, r)
+                        raise RuntimeError(f"Drive upload failed for part {i + 1}: {r}")
+                    drive_urls.append(r)
+                logger.info("Drive uploads done in %.1fs for %d parts", time.time() - t0, len(parts))
 
+                await self._notify.notify_user(uid, "📤 جاري الرفع على ووب سوشل...")
+
+                # --- 2. رفع WoopSocial — متوازي (max 3) ---
+                sem = asyncio.Semaphore(3)
+                async def _upload_one(dl_url: str, idx: int) -> Optional[str]:
+                    async with sem:
+                        logger.info("WoopSocial start part %d/%d for user %d", idx + 1, len(drive_urls), uid)
+                        mid = await asyncio.to_thread(publisher.upload_media, dl_url)
+                        if mid:
+                            logger.info("WoopSocial part %d OK: media_id=%s", idx + 1, mid)
+                        else:
+                            logger.error("WoopSocial part %d FAILED after 5 retries", idx + 1)
+                        return mid
+
+                t0 = time.time()
+                ws_tasks = [_upload_one(url, i) for i, url in enumerate(drive_urls)]
+                ws_results = await asyncio.gather(*ws_tasks, return_exceptions=True)
+                logger.info("WoopSocial uploads done in %.1fs", time.time() - t0)
+
+                media_ids = []
+                failed_indices = []
+                for i, r in enumerate(ws_results):
+                    if isinstance(r, Exception) or not r:
+                        failed_indices.append(i)
+                        media_ids.append(None)
+                        logger.error("WoopSocial part %d FAILED: %s", i + 1, r)
+                    else:
+                        media_ids.append(r)
+
+                # --- 3. جدولة تيكتوك — متوازي (للأجزاء الناجحة فقط) ---
                 interval = user.schedule_interval
                 now = datetime.utcnow()
-                success_count = 0
                 buffer_minutes = 5
-                last_pub_error = ""
 
-                for i, media_id in enumerate(media_ids):
-                    if not media_id:
-                        continue
+                valid_indices = [i for i, mid in enumerate(media_ids) if mid]
+
+                async def _schedule_one(i: int) -> bool:
+                    media_id = media_ids[i]
                     offset = buffer_minutes + (i * interval)
                     schedule_at = (now + timedelta(minutes=offset)).isoformat()
                     title_short = item.video_title[:50] if item.video_title else "فيديو"
                     caption = f"{title_short} | {i + 1}/{len(parts)}"
-
                     ok, err = await asyncio.to_thread(publisher.schedule_post, media_id, schedule_at, caption)
                     if ok:
-                        success_count += 1
                         self._schedule_drive_deletion(drive_urls[i])
-                    elif err:
-                        last_pub_error = err
+                        return True
+                    logger.error("Schedule failed for part %d: %s", i + 1, err)
+                    return False
 
-                if success_count > 0:
+                t0 = time.time()
+                sched_results = await asyncio.gather(
+                    *[_schedule_one(i) for i in valid_indices],
+                    return_exceptions=True,
+                )
+                success_count = sum(1 for r in sched_results if r is True)
+                logger.info("Scheduling done in %.1fs — %d succeeded", time.time() - t0, success_count)
+
+                # --- 4. إرسال النتيجة للمستخدم ---
+                if not failed_indices:
                     msg = f"🎉 تم نشر {success_count} جزء — جزء كل {interval} دقيقة"
                     await self._notify.notify_user(uid, msg)
                 else:
-                    err_txt = last_pub_error or "تحقق من بيانات WoopSocial."
-                    await self._notify.notify_user(
-                        uid, f"❌ فشل النشر على تيكتوك:\n{err_txt[:200]}"
+                    msg_parts = []
+                    if success_count > 0:
+                        msg_parts.append(f"✅ تم جدولة {success_count} أجزاء بنجاح.")
+                    msg_parts.append(
+                        f"⚠️ فشل رفع {len(failed_indices)} من {len(parts)} أجزاء."
                     )
+                    msg_parts.append("اختر الإجراء المناسب:")
+                    markup = InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton(
+                                "🔄 إعادة معالجة الفيديو كاملاً",
+                                callback_data=f"retry_{item.id}",
+                            ),
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "⏭️ تخطي الأجزاء الفاشلة",
+                                callback_data=f"skip_{item.id}",
+                            ),
+                        ],
+                    ])
+                    self._failed_items[item.id] = {
+                        "user_id": uid,
+                        "youtube_url": item.youtube_url,
+                    }
+                    await self._notify.notify_user_markup(uid, "\n".join(msg_parts), markup)
             else:
                 remaining = max(0, FREE_PARTS_LIMIT - user.free_parts_used)
                 msg = f"✅ تم تجهيز {len(parts)} جزء من الفيديو!"
@@ -315,6 +369,17 @@ class Worker:
                 shutil.rmtree(item_dir, ignore_errors=True)
             except Exception:
                 pass
+
+    async def retry_failed(self, item_id: str) -> bool:
+        state = self._failed_items.pop(item_id, None)
+        if not state:
+            return False
+        ok, _, _ = await self.enqueue(state["user_id"], state["youtube_url"])
+        return ok
+
+    async def skip_failed(self, item_id: str) -> bool:
+        state = self._failed_items.pop(item_id, None)
+        return state is not None
 
     async def stop(self):
         self._stop.set()
