@@ -4,28 +4,23 @@ import base64
 import tempfile
 import logging
 import time
+import json
 from typing import Optional
 
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+import requests
 from google.auth.transport.requests import Request
 
 logger = logging.getLogger(__name__)
 
-_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
-
 
 class GoogleDriveUploader:
     def __init__(self, credentials_b64: str, token_pickle_b64: str, folder_id: str):
-        self._creds_b64 = credentials_b64
         self._token_b64 = token_pickle_b64
         self._folder_id = folder_id
-        self._service = None
 
-    def _build_service(self):
+    def _get_credentials(self):
         cache_dir = tempfile.gettempdir()
         pickle_path = os.path.join(cache_dir, "tg2tiktok_token.pickle")
-        creds = None
 
         if self._token_b64:
             try:
@@ -43,13 +38,15 @@ class GoogleDriveUploader:
             except Exception as e:
                 logger.warning("token.pickle corrupt, will refresh: %s", e)
                 creds = None
+        else:
+            creds = None
 
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
                 with open(pickle_path, "wb") as f:
                     pickle.dump(creds, f)
-                logger.info("token.pickle refreshed")
+                logger.info("Drive token refreshed")
             except Exception as e:
                 logger.error("Token refresh failed: %s", e)
                 creds = None
@@ -60,49 +57,106 @@ class GoogleDriveUploader:
                 "تأكد من صحة TOKEN_PICKLE_B64 في Railway."
             )
 
-        self._service = build("drive", "v3", credentials=creds)
+        return creds
 
     def upload(self, file_path: str, public: bool = True) -> str:
         last_error = ""
         for attempt in range(1, 6):
             try:
-                if not self._service:
-                    self._build_service()
-
+                creds = self._get_credentials()
+                access_token = creds.token
                 name = os.path.basename(file_path)
-                media = MediaFileUpload(file_path, resumable=True, chunksize=5 * 1024 * 1024)
-                file_meta = {"name": name, "parents": [self._folder_id]}
+                file_size = os.path.getsize(file_path)
 
-                drive_file = (
-                    self._service.files()
-                    .create(body=file_meta, media_body=media, fields="id")
-                    .execute()
+                # --- 1. Create resumable upload session ---
+                session_resp = requests.post(
+                    "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "application/json; charset=UTF-8",
+                        "X-Upload-Content-Type": "video/mp4",
+                        "X-Upload-Content-Length": str(file_size),
+                    },
+                    data=json.dumps({"name": name, "parents": [self._folder_id]}),
+                    timeout=30,
                 )
-                file_id = drive_file.get("id")
+                if session_resp.status_code != 200:
+                    last_error = f"session: {session_resp.status_code} {session_resp.text[:200]}"
+                    logger.warning("Drive attempt %d: %s", attempt, last_error)
+                    continue
 
+                upload_url = session_resp.headers.get("Location")
+                if not upload_url:
+                    last_error = "no Location header"
+                    logger.warning("Drive attempt %d: %s", attempt, last_error)
+                    continue
+
+                # --- 2. Upload file bytes (single PUT for resumable) ---
+                with open(file_path, "rb") as f:
+                    upload_resp = requests.put(
+                        upload_url,
+                        headers={
+                            "Content-Length": str(file_size),
+                            "Content-Type": "video/mp4",
+                        },
+                        data=f,
+                        timeout=600,
+                    )
+                if upload_resp.status_code not in (200, 201):
+                    last_error = f"upload: {upload_resp.status_code} {upload_resp.text[:300]}"
+                    logger.warning("Drive attempt %d: %s", attempt, last_error)
+                    continue
+
+                file_id = upload_resp.json().get("id")
+                if not file_id:
+                    last_error = f"no id: {upload_resp.text[:200]}"
+                    logger.warning("Drive attempt %d: %s", attempt, last_error)
+                    continue
+
+                # --- 3. Set public permission ---
                 if public:
-                    self._service.permissions().create(
-                        fileId=file_id,
-                        body={"type": "anyone", "role": "reader"},
-                    ).execute()
+                    try:
+                        requests.post(
+                            f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions",
+                            headers={
+                                "Authorization": f"Bearer {access_token}",
+                                "Content-Type": "application/json",
+                            },
+                            data=json.dumps({"type": "anyone", "role": "reader"}),
+                            timeout=30,
+                        )
+                    except Exception as e:
+                        logger.warning("Drive set public failed (non-fatal): %s", e)
 
                 logger.info("Drive upload OK: %s (attempt %d)", file_path, attempt)
                 return f"https://drive.google.com/uc?export=download&confirm=t&id={file_id}"
+
+            except requests.exceptions.Timeout:
+                last_error = "timeout"
+                logger.warning("Drive upload attempt %d/5 timeout", attempt)
             except Exception as e:
                 last_error = str(e)
                 logger.warning("Drive upload attempt %d/5 failed: %s", attempt, e)
-                self._service = None  # force rebuild on next try
-                time.sleep(5)
+
+            # Exponential backoff: 5, 10, 20, 40, 80 → capped at 60s
+            sleep = min(5 * (2 ** (attempt - 1)), 60)
+            time.sleep(sleep)
 
         raise RuntimeError(f"Drive upload failed after 5 attempts: {last_error}")
 
     def delete(self, file_id: str) -> bool:
-        if not self._service:
-            self._build_service()
         try:
-            self._service.files().delete(fileId=file_id).execute()
-            logger.info("Deleted file %s from Drive", file_id)
-            return True
+            creds = self._get_credentials()
+            resp = requests.delete(
+                f"https://www.googleapis.com/drive/v3/files/{file_id}",
+                headers={"Authorization": f"Bearer {creds.token}"},
+                timeout=30,
+            )
+            if resp.status_code in (200, 204):
+                logger.info("Deleted file %s from Drive", file_id)
+                return True
+            logger.warning("Failed to delete file %s: %s %s", file_id, resp.status_code, resp.text[:200])
+            return False
         except Exception as e:
             logger.warning("Failed to delete file %s: %s", file_id, e)
             return False

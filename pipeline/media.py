@@ -191,8 +191,8 @@ def _run_ffmpeg(
 ) -> None:
     cmd = [
         "ffmpeg", "-y",
-        "-i", input_path,
         "-ss", str(ss),
+        "-i", input_path,
         "-t", str(t),
         "-vf",
         f"setpts={1/speed}*PTS,"

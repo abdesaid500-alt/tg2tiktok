@@ -4,6 +4,7 @@ import logging
 import os
 import time
 import uuid
+import dataclasses
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 _DRIVE_DELETE_DELAY_MINUTES = 30
 _DELETIONS_FILE = "drive_deletions.json"
+_QUEUE_FILE = "queue.json"
 
 
 class Worker:
@@ -86,6 +88,7 @@ class Worker:
             created_at=time.time(),
         )
         await self._queue.put(item)
+        self._save_queue()
         return True, "queued", item_id
 
     async def cancel_queue(self, user_id: int) -> int:
@@ -103,6 +106,7 @@ class Worker:
         for item in remaining:
             await self._queue.put(item)
         self._processing.discard(user_id)
+        self._save_queue()
         return count
 
     def get_user_queue(self, user_id: int) -> list[dict]:
@@ -159,10 +163,55 @@ class Worker:
         if expired:
             self._save_pending_deletions()
 
+    @property
+    def _queue_path(self):
+        return os.path.join(self._settings.data_dir, _QUEUE_FILE)
+
+    def _save_queue(self):
+        path = self._queue_path
+        items = []
+        for item in list(self._queue._queue):
+            items.append(dataclasses.asdict(item))
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(items, f, ensure_ascii=False)
+        except Exception as e:
+            logger.warning("Failed to save queue: %s", e)
+
+    def _load_queue(self):
+        path = self._queue_path
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                items = json.load(f)
+            restored = 0
+            for data in items:
+                try:
+                    data.pop("parts", None)
+                    data.pop("error", None)
+                    item = QueueItem(
+                        id=data["id"],
+                        user_id=data["user_id"],
+                        youtube_url=data["youtube_url"],
+                        video_title=data.get("video_title", ""),
+                        duration_seconds=data.get("duration_seconds", 0),
+                        status="queued",
+                        created_at=data.get("created_at", time.time()),
+                    )
+                    self._queue.put_nowait(item)
+                    restored += 1
+                except Exception as e:
+                    logger.warning("Failed to restore queue item: %s", e)
+            if restored:
+                logger.info("Restored %d items from saved queue", restored)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+
     async def run(self):
         logger.info("Worker started")
         os.makedirs(self._temp_dir, exist_ok=True)
         self._load_pending_deletions()
+        self._load_queue()
         last_cleanup = time.time()
 
         while not self._stop.is_set():
@@ -228,25 +277,20 @@ class Worker:
             await store.save("users")
 
             if user.has_api_key():
-                await self._notify.notify_user(uid, f"☁️ جاري الرفع... ({len(parts)} أجزاء)")
-
                 drive = self._get_drive()
                 publisher = self._get_publisher(user)
 
-                # --- 1. رفع Drive — متوازي ---
+                # --- 1. رفع Drive — تسلسلي (يمنع OOM + SSL pool corruption) ---
                 t0 = time.time()
-                async def _drive_upload_with_timeout(p: str) -> str:
-                    return await asyncio.wait_for(
-                        asyncio.to_thread(drive.upload, p), timeout=300,
-                    )
-                drive_tasks = [_drive_upload_with_timeout(p) for p in parts]
-                drive_results = await asyncio.gather(*drive_tasks, return_exceptions=True)
                 drive_urls = []
-                for i, r in enumerate(drive_results):
-                    if isinstance(r, Exception):
-                        logger.error("Drive upload failed for part %d: %s", i, r)
-                        raise RuntimeError(f"Drive upload failed for part {i + 1}: {r}")
-                    drive_urls.append(r)
+                for i, p in enumerate(parts):
+                    await self._notify.notify_user(
+                        uid, f"☁️ جاري الرفع... ({i + 1}/{len(parts)} أجزاء)"
+                    )
+                    url = await asyncio.wait_for(
+                        asyncio.to_thread(drive.upload, p), timeout=600,
+                    )
+                    drive_urls.append(url)
                 logger.info("Drive uploads done in %.1fs for %d parts", time.time() - t0, len(parts))
 
                 await self._notify.notify_user(uid, "📤 جاري الرفع على ووب سوشل...")
@@ -367,6 +411,7 @@ class Worker:
             )
         finally:
             self._processing.discard(uid)
+            self._save_queue()
             item_dir = os.path.join(self._temp_dir, f"{uid}_{item.id}")
             try:
                 import shutil
