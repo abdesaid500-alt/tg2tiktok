@@ -176,7 +176,7 @@ async def split_and_speed(
             else:
                 parts.append(part_file)
 
-            start += chunk
+            start += chunk - overlap
             idx += 1
 
         return parts

@@ -36,7 +36,7 @@ def _build_main_keyboard(lang: str):
 
 def _build_settings_keyboard(lang: str, user: User):
     speed_opts = [("1.0x", "1.0"), ("1.1x", "1.1"), ("1.2x", "1.5"), ("2.0x", "2.0")]
-    split_opts = [("5", "5"), ("10", "10"), ("15", "15"), ("20", "20")]
+    split_opts = [("5", "5"), ("7", "7"), ("9", "9")]
     sched_opts = [("10", "10"), ("15", "15"), ("30", "30"), ("60", "60")]
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(f"⚡ {t(lang, 'speed_label')}: {user.speed}x",
@@ -195,10 +195,9 @@ def create_app(token: str, worker: Worker):
             await query.edit_message_text(
                 text,
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("1", callback_data="ob_split_1"),
-                     InlineKeyboardButton("3", callback_data="ob_split_3"),
-                     InlineKeyboardButton("5", callback_data="ob_split_5"),
-                     InlineKeyboardButton("10", callback_data="ob_split_10")],
+                    [InlineKeyboardButton("5", callback_data="ob_split_5"),
+                     InlineKeyboardButton("7", callback_data="ob_split_7"),
+                     InlineKeyboardButton("9", callback_data="ob_split_9")],
                 ]),
             )
             return ONBOARDING_SPLIT
@@ -376,7 +375,7 @@ def create_app(token: str, worker: Worker):
             )
 
         elif data == "set_split":
-            vals = [("5", "5"), ("10", "10"), ("15", "15"), ("20", "20")]
+            vals = [("5", "5"), ("7", "7"), ("9", "9")]
             await query.edit_message_text(
                 t(lang, "split_label"),
                 reply_markup=_build_value_keyboard(lang, vals, "split_"),
