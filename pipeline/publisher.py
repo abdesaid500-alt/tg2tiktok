@@ -63,27 +63,38 @@ class GoogleDriveUploader:
         self._service = build("drive", "v3", credentials=creds)
 
     def upload(self, file_path: str, public: bool = True) -> str:
-        if not self._service:
-            self._build_service()
+        last_error = ""
+        for attempt in range(1, 6):
+            try:
+                if not self._service:
+                    self._build_service()
 
-        name = os.path.basename(file_path)
-        media = MediaFileUpload(file_path, resumable=True, chunksize=5 * 1024 * 1024)
-        file_meta = {"name": name, "parents": [self._folder_id]}
+                name = os.path.basename(file_path)
+                media = MediaFileUpload(file_path, resumable=True, chunksize=5 * 1024 * 1024)
+                file_meta = {"name": name, "parents": [self._folder_id]}
 
-        drive_file = (
-            self._service.files()
-            .create(body=file_meta, media_body=media, fields="id")
-            .execute()
-        )
-        file_id = drive_file.get("id")
+                drive_file = (
+                    self._service.files()
+                    .create(body=file_meta, media_body=media, fields="id")
+                    .execute()
+                )
+                file_id = drive_file.get("id")
 
-        if public:
-            self._service.permissions().create(
-                fileId=file_id,
-                body={"type": "anyone", "role": "reader"},
-            ).execute()
+                if public:
+                    self._service.permissions().create(
+                        fileId=file_id,
+                        body={"type": "anyone", "role": "reader"},
+                    ).execute()
 
-        return f"https://drive.google.com/uc?export=download&confirm=t&id={file_id}"
+                logger.info("Drive upload OK: %s (attempt %d)", file_path, attempt)
+                return f"https://drive.google.com/uc?export=download&confirm=t&id={file_id}"
+            except Exception as e:
+                last_error = str(e)
+                logger.warning("Drive upload attempt %d/5 failed: %s", attempt, e)
+                self._service = None  # force rebuild on next try
+                time.sleep(5)
+
+        raise RuntimeError(f"Drive upload failed after 5 attempts: {last_error}")
 
     def delete(self, file_id: str) -> bool:
         if not self._service:
