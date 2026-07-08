@@ -194,19 +194,19 @@ def _run_ffmpeg(
         "-i", input_path,
         "-ss", str(ss),
         "-t", str(t),
-    "-vf",
-    f"setpts={1/speed}*PTS,"
-    f"scale=1080:1920:force_original_aspect_ratio=increase,"
-    f"crop=1080:1920,setsar=1",
-    "-avoid_negative_ts", "make_zero",
-]
-if has_audio:
-    cmd.extend(["-af", f"atempo={speed}"])
-cmd.extend([
-    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-    "-movflags", "+faststart",
-    output_path,
-])
+        "-vf",
+        f"setpts={1/speed}*PTS,"
+        f"scale=1080:1920:force_original_aspect_ratio=increase,"
+        f"crop=1080:1920,setsar=1",
+        "-avoid_negative_ts", "make_zero",
+    ]
+    if has_audio:
+        cmd.extend(["-af", f"atempo={speed}"])
+    cmd.extend([
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-movflags", "+faststart",
+        output_path,
+    ])
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
