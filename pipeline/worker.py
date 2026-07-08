@@ -231,7 +231,7 @@ class Worker:
 
                 drive_urls = []
                 for p in parts:
-                    url = drive.upload(p)
+                    url = await asyncio.to_thread(drive.upload, p)
                     drive_urls.append(url)
 
                 await self._notify.notify_user(uid, "📤 جاري الجدولة على تيكتوك...")
@@ -241,14 +241,14 @@ class Worker:
                 media_ids = []
                 for i, dl_url in enumerate(drive_urls):
                     logger.info("Starting upload part %d/%d for user %d", i + 1, len(drive_urls), uid)
-                    media_id = publisher.upload_media(dl_url)
+                    media_id = await asyncio.to_thread(publisher.upload_media, dl_url)
                     media_ids.append(media_id)
                     if not media_id:
                         logger.error("Part %d upload FAILED for user %d", i, uid)
                     else:
                         logger.info("Part %d uploaded OK: media_id=%s", i + 1, media_id)
                     if i < len(drive_urls) - 1:
-                        time.sleep(10)
+                        await asyncio.sleep(10)
 
                 interval = user.schedule_interval
                 now = datetime.utcnow()
@@ -264,7 +264,7 @@ class Worker:
                     title_short = item.video_title[:50] if item.video_title else "فيديو"
                     caption = f"{title_short} | {i + 1}/{len(parts)}"
 
-                    ok, err = publisher.schedule_post(media_id, schedule_at, caption)
+                    ok, err = await asyncio.to_thread(publisher.schedule_post, media_id, schedule_at, caption)
                     if ok:
                         success_count += 1
                         self._schedule_drive_deletion(drive_urls[i])
