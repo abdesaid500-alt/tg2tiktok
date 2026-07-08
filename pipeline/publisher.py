@@ -106,19 +106,30 @@ class WoopSocialPublisher:
 
     def upload_media(self, file_url: str) -> Optional[str]:
         import requests
+        import os as _os
 
         tmp_path = None
         last_error = ""
         try:
+            logger.info("Downloading from Drive: %s ...", file_url[:80])
             r = requests.get(file_url, stream=True, timeout=300)
             r.raise_for_status()
+            total = 0
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
                 for chunk in r.iter_content(8192):
                     tmp.write(chunk)
+                    total += len(chunk)
                 tmp_path = tmp.name
+            r.close()
+            logger.info("Downloaded %d bytes to %s", total, tmp_path)
 
             for attempt in range(1, 4):
                 try:
+                    file_size = _os.path.getsize(tmp_path)
+                    logger.info(
+                        "WoopSocial upload attempt %d/3 — file=%s size=%d",
+                        attempt, tmp_path, file_size,
+                    )
                     with open(tmp_path, "rb") as vf:
                         resp = requests.post(
                             f"{self._base}/media",
@@ -127,6 +138,10 @@ class WoopSocialPublisher:
                             files={"file": ("video.mp4", vf, "video/mp4")},
                             timeout=300,
                         )
+                    logger.info(
+                        "WoopSocial attempt %d response: %s %s",
+                        attempt, resp.status_code, resp.text[:200],
+                    )
                     if resp.status_code in (200, 201):
                         data = resp.json()
                         mid = (
@@ -135,7 +150,9 @@ class WoopSocialPublisher:
                             or data.get("media_id")
                         )
                         if mid:
+                            logger.info("WoopSocial upload OK: media_id=%s", mid)
                             return mid
+                        logger.warning("WoopSocial OK but no media_id: %s", data)
                     last_error = f"{resp.status_code} {resp.text[:300]}"
                     logger.warning(
                         "WoopSocial media attempt %d: %s", attempt, last_error,
