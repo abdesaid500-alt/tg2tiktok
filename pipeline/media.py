@@ -196,8 +196,8 @@ def _run_ffmpeg(
         "-t", str(t),
         "-vf",
         f"setpts={1/speed}*PTS,"
-        f"scale=1080:1920:force_original_aspect_ratio=increase,"
-        f"crop=1080:1920,setsar=1",
+        f"scale=1080:1920:force_original_aspect_ratio=decrease,"
+        f"setsar=1,pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
         "-avoid_negative_ts", "make_zero",
     ]
     if has_audio:
@@ -210,7 +210,7 @@ def _run_ffmpeg(
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
-        raise RuntimeError(f"FFmpeg failed: {result.stderr[-300:]}")
+        raise RuntimeError(f"FFmpeg failed: {result.stderr[-800:]}")
 
 
 def _get_duration(path: str) -> float:
