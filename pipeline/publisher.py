@@ -163,6 +163,20 @@ class GoogleDriveUploader:
 
 
 class WoopSocialPublisher:
+    HASHTAG_POOL = [
+        "#foryou", "#fyp", "#viral", "#trending",
+        "#explore", "#foryoupage", "#tiktok", "#fypシ",
+        "#viralvideo", "#explorepage", "#foryourpage",
+        "#tiktokviral", "#اكسبلور", "#ترند", "#تيك_توك",
+    ]
+
+    @staticmethod
+    def hashtags_for_part(idx: int, total: int, per_part: int = 3) -> str:
+        pool = WoopSocialPublisher.HASHTAG_POOL
+        start = (idx * per_part) % len(pool)
+        selected = (pool[start:] + pool[:start])[:per_part]
+        return " ".join(selected)
+
     def __init__(self, api_key: str, project_id: str, account_id: str):
         self._api_key = api_key
         self._project_id = project_id
@@ -275,19 +289,52 @@ class WoopSocialPublisher:
         logger.error("WoopSocial media upload failed: %s", last_error)
         return None
 
+    def upload_image(self, file_path: str) -> Optional[str]:
+        last_error = ""
+        for attempt in range(1, 4):
+            try:
+                file_size = os.path.getsize(file_path)
+                with open(file_path, "rb") as f:
+                    resp = requests.post(
+                        f"{self._base}/media",
+                        params={"projectId": self._project_id},
+                        headers={"Authorization": f"Bearer {self._api_key}"},
+                        files={"file": ("cover.jpg", f, "image/jpeg")},
+                        timeout=120,
+                    )
+                if resp.status_code in (200, 201):
+                    data = resp.json()
+                    mid = data.get("id") or data.get("mediaId") or data.get("media_id")
+                    if mid:
+                        logger.info("WoopSocial image upload OK: media_id=%s", mid)
+                        return mid
+                last_error = f"{resp.status_code} {resp.text[:200]}"
+                logger.warning("WoopSocial image attempt %d: %s", attempt, last_error)
+            except Exception as e:
+                last_error = str(e)
+                logger.warning("WoopSocial image attempt %d error: %s", attempt, e)
+            time.sleep(3)
+        logger.error("WoopSocial image upload failed: %s", last_error)
+        return None
+
     def schedule_post(
-        self, media_id: str, schedule_at: str, description: str = ""
+        self, media_id: str, schedule_at: str, description: str = "",
+        cover_media_id: Optional[str] = None,
     ) -> tuple[bool, str]:
         import requests
 
         if not schedule_at.endswith("Z"):
             schedule_at += "Z"
 
+        media_list = [{"type": "MEDIA_LIBRARY", "mediaId": media_id}]
+        if cover_media_id:
+            media_list.append({"type": "IMAGE", "mediaId": cover_media_id})
+
         payload = {
             "content": [
                 {
                     "text": description,
-                    "media": [{"type": "MEDIA_LIBRARY", "mediaId": media_id}],
+                    "media": media_list,
                 }
             ],
             "schedule": {

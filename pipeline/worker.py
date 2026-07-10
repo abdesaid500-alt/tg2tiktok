@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import os
 import time
 import uuid
@@ -292,6 +293,25 @@ class Worker:
                 media_ids = []
                 t0 = time.time()
 
+                # --- تحميل غلاف الفيديو من يوتيوب (مرة واحدة لكل الأجزاء) ---
+                cover_media_id = None
+                yt_match = re.search(r'(?:v=|youtu\.be/|/v/|/shorts/)([\w-]{11})', item.youtube_url)
+                if yt_match:
+                    yt_id = yt_match.group(1)
+                    cover_url = f"https://img.youtube.com/vi/{yt_id}/maxresdefault.jpg"
+                    cover_path = os.path.join(item_dir, "cover.jpg")
+                    try:
+                        import requests as _req
+                        cr = _req.get(cover_url, timeout=30)
+                        if cr.status_code == 200:
+                            with open(cover_path, "wb") as f:
+                                f.write(cr.content)
+                            cover_media_id = await asyncio.to_thread(publisher.upload_image, cover_path)
+                            if cover_media_id:
+                                logger.info("Cover uploaded: media_id=%s", cover_media_id)
+                    except Exception as e:
+                        logger.warning("Cover download/upload failed (non-fatal): %s", e)
+
                 for i, p in enumerate(parts):
                     # 1. رفع إلى Drive
                     await self._notify.notify_user(
@@ -319,8 +339,9 @@ class Worker:
                     offset = buffer_minutes + (i * interval)
                     schedule_at = (now + timedelta(minutes=offset)).isoformat()
                     title_short = item.video_title[:50] if item.video_title else "فيديو"
-                    caption = f"{title_short} | {i + 1}/{len(parts)}"
-                    ok, err = await asyncio.to_thread(publisher.schedule_post, mid, schedule_at, caption)
+                    tags = WoopSocialPublisher.hashtags_for_part(i, len(parts))
+                    caption = f"{title_short} | {i + 1}/{len(parts)}\n{tags}"
+                    ok, err = await asyncio.to_thread(publisher.schedule_post, mid, schedule_at, caption, cover_media_id)
                     if ok:
                         self._schedule_drive_deletion(dl_url)
                         success_count += 1
