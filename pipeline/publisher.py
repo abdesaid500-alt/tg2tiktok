@@ -364,6 +364,7 @@ class WoopSocialPublisher:
             "Content-Type": "application/json",
         }
         last_err = ""
+        cover_removed = False
         for attempt in range(1, 6):
             try:
                 resp = requests.post(
@@ -382,6 +383,12 @@ class WoopSocialPublisher:
                         last_err = body.get("message") or body.get("code") or resp.text[:400]
                 except Exception:
                     last_err = resp.text[:400]
+                # If cover image type is rejected, retry without cover
+                if cover_media_id and "unknown type IMAGE" in last_err and not cover_removed:
+                    logger.warning("WoopSocial does not support IMAGE type — removing cover and retrying")
+                    payload["content"][0]["media"] = [payload["content"][0]["media"][0]]
+                    cover_removed = True
+                    continue
                 logger.warning(
                     "WoopSocial post attempt %d: %s %s",
                     attempt, resp.status_code, last_err,
