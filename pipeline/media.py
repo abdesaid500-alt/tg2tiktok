@@ -236,7 +236,6 @@ def _run_ffmpeg(
     ]
     if text_overlay:
         cmd.extend(["-i", text_overlay])
-    cmd.extend(["-t", str(t)])
 
     if text_overlay:
         vf = (
@@ -244,9 +243,11 @@ def _run_ffmpeg(
             f"scale=1080:1920:force_original_aspect_ratio=decrease,setsar=1[base];"
             f"[base][1:v]overlay=(W-w)/2:280:enable='between(t,0,5)'[outv]"
         )
-        cmd.extend(["-filter_complex", vf, "-map", "[outv]"])
-        if has_audio:
-            cmd.extend(["-map", "0:a?"])
+        ac = f"[0:a]atempo={speed}[outa]" if has_audio else ""
+        if ac:
+            cmd.extend(["-filter_complex", f"{vf};{ac}", "-map", "[outv]", "-map", "[outa]"])
+        else:
+            cmd.extend(["-filter_complex", vf, "-map", "[outv]"])
         cmd.extend(["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"])
     else:
         cmd.extend([
@@ -255,13 +256,12 @@ def _run_ffmpeg(
             f"scale=1080:1920:force_original_aspect_ratio=decrease,setsar=1",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
         ])
+        if has_audio:
+            cmd.extend(["-af", f"atempo={speed}"])
 
     cmd.extend([
+        "-t", str(t),
         "-avoid_negative_ts", "make_zero",
-    ])
-    if has_audio:
-        cmd.extend(["-af", f"atempo={speed}"])
-    cmd.extend([
         "-movflags", "+faststart",
         output_path,
     ])
@@ -269,6 +269,8 @@ def _run_ffmpeg(
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
         raise RuntimeError(f"FFmpeg failed: {result.stderr[:1500]}")
+    actual_dur = _get_duration(output_path)
+    logger.info("FFmpeg output duration: %.2fs (expected ~%.2fs)", actual_dur, t / speed)
 
 
 def _get_duration(path: str) -> float:
