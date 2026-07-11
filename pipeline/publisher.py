@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class GoogleDriveUploader:
-    def __init__(self, credentials_b64: str, token_pickle_b64: str, folder_id: str):
+    def __init__(self, token_pickle_b64: str, folder_id: str):
         self._token_b64 = token_pickle_b64
         self._folder_id = folder_id
 

@@ -9,7 +9,6 @@ class Settings:
     admin_bot_token: str
     admin_id: int
     drive_folder_id: str
-    google_credentials_b64: str
     token_pickle_b64: str
     yt_cookies_b64: str
     yt_po_token: Optional[str] = None
@@ -27,7 +26,6 @@ class Settings:
             admin_bot_token=os.environ["ADMIN_BOT_TOKEN"],
             admin_id=int(os.environ["ADMIN_ID"]),
             drive_folder_id=os.environ["DRIVE_FOLDER_ID"],
-            google_credentials_b64=os.environ["GOOGLE_CREDENTIALS_B64"],
             token_pickle_b64=os.environ["TOKEN_PICKLE_B64"],
             yt_cookies_b64=os.environ.get("YT_COOKIES_B64", ""),
             yt_po_token=os.environ.get("YT_PO_TOKEN"),

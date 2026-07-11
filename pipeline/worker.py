@@ -12,7 +12,7 @@ from typing import Optional
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from core.config import Settings
-from core.models import User, QueueItem, PLANS
+from core.models import User, QueueItem, PLANS, FREE_PARTS_LIMIT
 from core import storage as store
 from core.notifier import Notifier
 from pipeline.media import download_video, split_and_speed, cleanup_temp
@@ -41,7 +41,6 @@ class Worker:
     def _get_drive(self) -> GoogleDriveUploader:
         if not self._drive:
             self._drive = GoogleDriveUploader(
-                self._settings.google_credentials_b64,
                 self._settings.token_pickle_b64,
                 self._settings.drive_folder_id,
             )

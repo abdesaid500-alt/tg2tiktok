@@ -35,7 +35,7 @@ def _build_main_keyboard(lang: str):
 
 
 def _build_settings_keyboard(lang: str, user: User):
-    speed_opts = [("1.0x", "1.0"), ("1.1x", "1.1"), ("1.2x", "1.5"), ("2.0x", "2.0")]
+    speed_opts = [("1.0x", "1.0"), ("1.1x", "1.1"), ("1.5x", "1.5"), ("2.0x", "2.0")]
     split_opts = [("5", "5"), ("7", "7"), ("9", "9")]
     sched_opts = [("10", "10"), ("15", "15"), ("30", "30"), ("60", "60")]
     return InlineKeyboardMarkup([
