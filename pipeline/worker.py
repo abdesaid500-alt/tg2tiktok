@@ -382,8 +382,9 @@ class Worker:
                         "user_id": uid,
                         "youtube_url": item.youtube_url,
                     }
-                    # Cleanup orphaned media from WoopSocial
-                    for i, mid in enumerate(media_ids):
+                    # Cleanup only failed parts' media from WoopSocial
+                    for i in failed_indices:
+                        mid = media_ids[i] if i < len(media_ids) else None
                         if mid:
                             await asyncio.to_thread(publisher.delete_media, mid)
                     await self._notify.notify_user_markup(uid, "\n".join(msg_parts), markup)
