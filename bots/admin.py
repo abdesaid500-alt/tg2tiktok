@@ -152,6 +152,29 @@ def create_app(token: str, admin_id: int):
                 users_data[uid] = u
                 await store.save("users")
                 await query.edit_message_text(f"✅ تم تفعيل المستخدم {uid}")
+                try:
+                    u_obj = User(**u)
+                    pp = PLANS.get(u_obj.plan, PLANS["trial"])
+                    lang = u_obj.language
+                    await context.bot.send_message(
+                        chat_id=int(uid),
+                        text=(
+                            f"🎉 تم تفعيل حسابك في TG2TikTok!\n\n"
+                            f"📋 خطتك: {pp.name}\n"
+                            f"📅 تنتهي: {time.strftime('%Y-%m-%d', time.localtime(u_obj.expires_at))}\n\n"
+                            f"⚙️ إعداداتك الحالية:\n"
+                            f"  ⚡ السرعة: {u_obj.speed}x\n"
+                            f"  ✂️ التقسيم: {u_obj.split_minutes} دقائق\n"
+                            f"  ⏰ الفاصل: {u_obj.schedule_interval} دقيقة\n\n"
+                            f"كيفية الاستخدام:\n"
+                            f"1️⃣ أرسل رابط يوتيوب للبوت\n"
+                            f"2️⃣ اختر عدد الأجزاء\n"
+                            f"3️⃣ سيتم الرفع والجدولة تلقائياً\n\n"
+                            f"للاستفسارات: @luxx_usma"
+                        ),
+                    )
+                except Exception:
+                    pass
 
         elif data.startswith("admin_lang_"):
             parts = data.split("_")

@@ -7,6 +7,8 @@ import shutil
 import time
 from typing import Optional
 
+from PIL import Image, ImageDraw, ImageFont
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,6 +22,42 @@ def _init_ffmpeg() -> None:
 
 
 _init_ffmpeg()
+
+
+def _find_font() -> Optional[str]:
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+        "C:\\Windows\\Fonts\\arialbd.ttf",
+        "C:\\Windows\\Fonts\\arial.ttf",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def _make_text_overlay(output_dir: str, part_idx: int) -> str:
+    path = os.path.join(output_dir, f"overlay_{part_idx:03d}.png")
+    img = Image.new("RGBA", (1080, 140), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    font_path = _find_font()
+    font_size = 56
+    if font_path:
+        font = ImageFont.truetype(font_path, font_size)
+    else:
+        font = ImageFont.load_default()
+    text = f"Part {part_idx}"
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    x = (1080 - tw) // 2
+    y = (140 - th) // 2
+    draw.text((x, y), text, fill=(255, 255, 255, 255), font=font)
+    img.save(path)
+    return path
 
 
 async def download_video(
@@ -165,8 +203,9 @@ async def split_and_speed(
                 dur = total_dur - start
 
             part_file = os.path.join(output_dir, f"part_{idx:03d}.mp4")
+            overlay_img = _make_text_overlay(output_dir, idx)
             t0 = time.time()
-            _run_ffmpeg(input_path, part_file, speed, has_audio, start, dur)
+            _run_ffmpeg(input_path, part_file, speed, has_audio, start, dur, text_overlay=overlay_img)
             elapsed = time.time() - t0
             logger.info("Part %03d done in %.1fs (start=%.1f dur=%.1f)", idx, elapsed, start, dur)
 
@@ -188,21 +227,41 @@ def _run_ffmpeg(
     input_path: str, output_path: str,
     speed: float, has_audio: bool,
     ss: float, t: float,
+    text_overlay: Optional[str] = None,
 ) -> None:
     cmd = [
         "ffmpeg", "-y",
         "-ss", str(ss),
         "-i", input_path,
-        "-t", str(t),
-        "-vf",
-        f"setpts={1/speed}*PTS,"
-        f"scale=1080:1920:force_original_aspect_ratio=decrease,setsar=1",
-        "-avoid_negative_ts", "make_zero",
     ]
+    if text_overlay:
+        cmd.extend(["-i", text_overlay])
+    cmd.extend(["-t", str(t)])
+
+    if text_overlay:
+        vf = (
+            f"[0:v]setpts={1/speed}*PTS,"
+            f"scale=1080:1920:force_original_aspect_ratio=decrease,setsar=1[base];"
+            f"[base][1:v]overlay=(W-w)/2:280:enable='between(t,0,5)'[outv]"
+        )
+        cmd.extend(["-filter_complex", vf, "-map", "[outv]"])
+        if has_audio:
+            cmd.extend(["-map", "0:a?"])
+        cmd.extend(["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"])
+    else:
+        cmd.extend([
+            "-vf",
+            f"setpts={1/speed}*PTS,"
+            f"scale=1080:1920:force_original_aspect_ratio=decrease,setsar=1",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        ])
+
+    cmd.extend([
+        "-avoid_negative_ts", "make_zero",
+    ])
     if has_audio:
         cmd.extend(["-af", f"atempo={speed}"])
     cmd.extend([
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
         "-movflags", "+faststart",
         output_path,
     ])
