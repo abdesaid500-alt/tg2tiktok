@@ -10,6 +10,7 @@ from telegram.ext import (
 
 from core.models import User, PLANS
 from core import storage as store
+from core.config import SUPPORT_USERNAME
 from core.i18n import t
 
 logger = logging.getLogger(__name__)
@@ -17,8 +18,8 @@ logger = logging.getLogger(__name__)
 (
     ASK_TELEGRAM_ID, ASK_PLAN, ASK_DAYS, ASK_MESSAGE,
     ASK_API_KEY, ASK_PROJECT_ID, ASK_ACCOUNT_ID,
-    ASK_INSTAGRAM_ACCOUNT_ID,
-) = range(8)
+    ASK_INSTAGRAM_ACCOUNT_ID, ASK_CUSTOM_DAYS, ASK_EXTEND_DAYS,
+) = range(10)
 
 
 def _is_admin(update: Update, admin_id: int) -> bool:
@@ -39,6 +40,7 @@ def _user_details_keyboard(uid: int, user: User = None):
     if user and user.is_active():
         buttons.append([InlineKeyboardButton("🔴 إيقاف", callback_data=f"admin_stop_{uid}"),
                         InlineKeyboardButton("🗑 حذف", callback_data=f"admin_delete_{uid}")])
+        buttons.append([InlineKeyboardButton("⛔ إنهاء الخطة", callback_data=f"admin_expire_{uid}")])
     else:
         buttons.append([InlineKeyboardButton("🟢 تفعيل", callback_data=f"admin_activate_{uid}"),
                         InlineKeyboardButton("🗑 حذف", callback_data=f"admin_delete_{uid}")])
@@ -48,6 +50,8 @@ def _user_details_keyboard(uid: int, user: User = None):
         buttons.append([InlineKeyboardButton("📸 تغيير انستغرام", callback_data=f"admin_ig_{uid}")])
     else:
         buttons.append([InlineKeyboardButton("📸 ربط انستغرام", callback_data=f"admin_ig_{uid}")])
+    if user and user.is_active():
+        buttons.append([InlineKeyboardButton("⏳ تمديد الاشتراك", callback_data=f"admin_extend_{uid}")])
     buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_users")])
     return InlineKeyboardMarkup(buttons)
 
@@ -149,6 +153,15 @@ def create_app(token: str, admin_id: int):
                 await store.save("users")
                 await query.edit_message_text(f"✅ تم إيقاف المستخدم {uid}")
 
+        elif data.startswith("admin_expire_"):
+            uid = data.replace("admin_expire_", "")
+            u = users_data.get(uid)
+            if u:
+                u["expires_at"] = time.time()
+                users_data[uid] = u
+                await store.save("users")
+                await query.edit_message_text(f"⛔ تم إنهاء خطة المستخدم {uid} فوراً")
+
         elif data.startswith("admin_activate_"):
             uid = data.replace("admin_activate_", "")
             u = users_data.get(uid)
@@ -175,7 +188,7 @@ def create_app(token: str, admin_id: int):
                             f"1️⃣ أرسل رابط يوتيوب للبوت\n"
                             f"2️⃣ اختر عدد الأجزاء\n"
                             f"3️⃣ سيتم الرفع والجدولة تلقائياً\n\n"
-                            f"للاستفسارات: @luxx_usma"
+                            f"للاستفسارات: @{SUPPORT_USERNAME}"
                         ),
                     )
                 except Exception:
@@ -243,6 +256,14 @@ def create_app(token: str, admin_id: int):
             context.user_data["admin_expected_state"] = "admin_ig"
             return
 
+        elif data.startswith("admin_extend_"):
+            uid = data.replace("admin_extend_", "")
+            context.user_data["admin_extend_uid"] = uid
+            await query.edit_message_text(
+                "أرسل عدد الأيام الإضافية لإضافتها إلى الاشتراك الحالي:"
+            )
+            return ASK_EXTEND_DAYS
+
     async def _show_users(query, users_data, page):
         per_page = 5
         total_pages = max(1, (len(users_data) + per_page - 1) // per_page)
@@ -278,7 +299,7 @@ def create_app(token: str, admin_id: int):
         entry_points=[CallbackQueryHandler(admin_callback, pattern="^admin_"
             r"(add|stats|users|users_page_\d+|stop_\d+|activate_\d+|"
             r"lang_\d+(?:_(?:ar|en))?|delete_\d+|"
-            r"plan_\d+|setplan:|setplan_|back|noop|user_\d+|ig_\d+)")],
+            r"plan_\d+|setplan:|setplan_|back|noop|user_\d+|ig_\d+|extend_\d+|expire_\d+)")],
         states={
             ASK_TELEGRAM_ID: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, _on_telegram_id)
@@ -296,6 +317,12 @@ def create_app(token: str, admin_id: int):
             ASK_INSTAGRAM_ACCOUNT_ID: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, _on_instagram_account_id)
             ],
+            ASK_CUSTOM_DAYS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, _on_custom_days)
+            ],
+            ASK_EXTEND_DAYS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, _on_admin_extend)
+            ],
         },
         fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
         allow_reentry=True,
@@ -312,7 +339,7 @@ def create_app(token: str, admin_id: int):
     )
 
     admin_ig_handler = MessageHandler(
-        filters.TEXT & ~filters.COMMAND & ~filters.UpdateType.CHANNEL,
+        filters.TEXT & ~filters.COMMAND & ~filters.UpdateType.CHANNEL_POST,
         _on_admin_ig_text,
     )
 
@@ -355,7 +382,28 @@ async def _on_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plan = query.data.replace("admin_newplan:", "")
     context.user_data["new_plan"] = plan
     context.user_data["new_username"] = str(context.user_data["new_uid"])
-    await query.edit_message_text("أرسل WoopSocial API Key:")
+    await query.edit_message_text(
+        "عدد أيام الاشتراك (أرسل رقماً، أو 'skip' لاستخدام المدة الافتراضية):"
+    )
+    return ASK_CUSTOM_DAYS
+
+
+async def _on_custom_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update, context.application.bot_data.get("admin_id", 0)):
+        return ConversationHandler.END
+    text = update.message.text.strip()
+    if text.lower() == "skip":
+        context.user_data["custom_days"] = None
+    else:
+        try:
+            val = int(text)
+            if val < 1:
+                raise ValueError
+            context.user_data["custom_days"] = val
+        except ValueError:
+            await update.message.reply_text("❌ الرقم غير صالح. أرسل رقماً صحيحاً موجباً، أو 'skip':")
+            return ASK_CUSTOM_DAYS
+    await update.message.reply_text("أرسل WoopSocial API Key:")
     return ASK_API_KEY
 
 
@@ -401,12 +449,14 @@ async def _on_instagram_account_id(update: Update, context: ContextTypes.DEFAULT
     ig_account_id = "" if ig_text.lower() == "skip" else ig_text
 
     pp = PLANS.get(plan, PLANS["trial"])
+    custom_days = context.user_data.pop("custom_days", None)
+    duration_days = custom_days if custom_days else pp.duration_days
     now = time.time()
     user = User(
         telegram_id=uid,
         plan=plan,
         created_at=now,
-        expires_at=now + pp.duration_days * 86400,
+        expires_at=now + duration_days * 86400,
         username=username,
         status="active",
         woopsocial_api_key=api_key,
@@ -460,6 +510,35 @@ async def _on_admin_ig_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⏭️ تم تخطي ربط Instagram للمستخدم {uid}")
     context.user_data.pop("admin_expected_state", None)
     context.user_data.pop("admin_ig_uid", None)
+
+
+async def _on_admin_extend(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update, context.application.bot_data.get("admin_id", 0)):
+        return ConversationHandler.END
+    uid = context.user_data.get("admin_extend_uid")
+    if not uid:
+        await update.message.reply_text("❌ خطأ: لم يتم تحديد المستخدم.")
+        return ConversationHandler.END
+    text = update.message.text.strip()
+    try:
+        extra_days = int(text)
+        if extra_days < 1:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("❌ الرقم غير صالح. أرسل رقماً صحيحاً موجباً:")
+        return ASK_EXTEND_DAYS
+    users_data = await store.get("users")
+    if uid not in users_data:
+        await update.message.reply_text("❌ المستخدم غير موجود.")
+        return ConversationHandler.END
+    old_expires = users_data[uid].get("expires_at", time.time())
+    new_expires = max(old_expires, time.time()) + extra_days * 86400
+    users_data[uid]["expires_at"] = new_expires
+    await store.save("users")
+    expire_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(new_expires))
+    await update.message.reply_text(f"✅ تم تمديد اشتراك المستخدم {uid} لمدة {extra_days} يوم.\n📅 ينتهي: {expire_str}")
+    context.user_data.pop("admin_extend_uid", None)
+    return ConversationHandler.END
 
 
 async def _start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):

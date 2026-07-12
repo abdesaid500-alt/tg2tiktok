@@ -40,6 +40,8 @@ def _find_font() -> Optional[str]:
     return None
 
 
+# Called only when video is split into multiple parts (total_dur >= min_part_seconds).
+# The "Part N" text appears for the first 5 seconds of each part only.
 def _make_text_overlay(output_dir: str, part_idx: int) -> str:
     path = os.path.join(output_dir, f"overlay_{part_idx:03d}.png")
     img = Image.new("RGBA", (1080, 140), (0, 0, 0, 0))

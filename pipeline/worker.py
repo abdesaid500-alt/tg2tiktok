@@ -11,7 +11,7 @@ from typing import Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from core.config import Settings
+from core.config import Settings, SUPPORT_USERNAME
 from core.models import User, QueueItem, PLANS, FREE_PARTS_LIMIT
 from core import storage as store
 from core.notifier import Notifier
@@ -108,6 +108,24 @@ class Worker:
         self._processing.discard(user_id)
         self._save_queue()
         return count
+
+    async def cancel_single_item(self, user_id: int, item_id: str) -> bool:
+        remaining = []
+        found = False
+        while not self._queue.empty():
+            try:
+                item = self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if item.user_id == user_id and item.id == item_id and item.status == "queued":
+                found = True
+                continue
+            remaining.append(item)
+        for item in remaining:
+            await self._queue.put(item)
+        if found:
+            self._save_queue()
+        return found
 
     def get_user_queue(self, user_id: int) -> list[dict]:
         items = []
@@ -416,7 +434,7 @@ class Worker:
                     name = {"trial": "تجريبي", "basic": "أساسي", "pro": "احترافي", "unlimited": "غير محدود"}.get(key, key)
                     plans_text += f"\n• {name}: {pp.daily_limit} فيديو/يوم | {pp.queue_limit} طابور | {pp.duration_days} يوم"
                 msg += plans_text
-                msg += "\n\n💬 تواصل مع الدعم للاشتراك"
+                msg += f"\n\n💬 تواصل مع الدعم: @{SUPPORT_USERNAME}"
                 if remaining > 0:
                     msg += f"\n⚡ تبقى لك {remaining} من {FREE_PARTS_LIMIT} جزء مجاني للتجربة"
                 else:
@@ -426,7 +444,7 @@ class Worker:
         except PermissionError:
             await self._notify.notify_user(
                 uid,
-                "⚠️ انتهت صلاحية ملف تعريف يوتيوب! تواصل مع الدعم لتجديد cookies.",
+                f"⚠️ انتهت صلاحية ملف تعريف يوتيوب! تواصل مع الدعم @{SUPPORT_USERNAME} لتجديد cookies.",
             )
         except Exception as e:
             logger.error("Processing failed for %d: %s", uid, e)

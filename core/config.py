@@ -2,6 +2,9 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional
 
+SUPPORT_USERNAME = "luxx_usma"
+SUPPORT_TELEGRAM_ID = 7019977550
+
 
 @dataclass
 class Settings:

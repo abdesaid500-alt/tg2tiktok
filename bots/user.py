@@ -10,6 +10,7 @@ from telegram.ext import (
 
 from core.models import User, PLANS, FREE_PARTS_LIMIT
 from core import storage as store
+from core.config import SUPPORT_USERNAME
 from core.i18n import t
 from pipeline.worker import Worker
 
@@ -17,7 +18,8 @@ logger = logging.getLogger(__name__)
 
 (
     ONBOARDING_LANG, ONBOARDING_SPEED, ONBOARDING_SPLIT, ONBOARDING_INTERVAL,
-) = range(100, 104)
+    SPLIT_CUSTOM,
+) = range(100, 105)
 
 YT_PATTERN = re.compile(
     r"(https?://)?(www\.)?(youtube\.com|youtu\.be|m\.youtube\.com)/"
@@ -148,7 +150,7 @@ def create_app(token: str, worker: Worker):
                 await update.message.reply_text(
                     f"❌ انتهت الأجزاء المجانية!\n\n"
                     f"━━━ 📋 خطط الاشتراك ━━━\n{plans_text}\n\n"
-                    f"💬 تواصل مع الدعم للاشتراك"
+                    f"💬 تواصل مع الدعم: @{SUPPORT_USERNAME}"
                 )
             elif result == "queue_full":
                 pp = user.plan_params()
@@ -317,16 +319,20 @@ def create_app(token: str, worker: Worker):
                 )
                 return
             lines = [t(lang, "queue_header")]
+            buttons = []
             for it in items:
                 st = t(lang, f"status_{it['status']}", default=it["status"])
                 lines.append(f"🆔 {it['id']} — {it['title'][:30]}\n⏳ {st}")
+                if it["status"] == "queued":
+                    buttons.append([
+                        InlineKeyboardButton(f"🗑 إلغاء {it['id']}", callback_data=f"cancel_item_{it['id']}")
+                    ])
             lines.append("")
+            buttons.append([InlineKeyboardButton("❌ إلغاء الكل", callback_data="cancel_queue")])
+            buttons.append([InlineKeyboardButton(t(lang, "back"), callback_data="main_menu")])
             await query.edit_message_text(
                 "\n".join(lines),
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("❌ إلغاء الكل", callback_data="cancel_queue")],
-                    [InlineKeyboardButton(t(lang, "back"), callback_data="main_menu")],
-                ]),
+                reply_markup=InlineKeyboardMarkup(buttons),
             )
 
         elif data == "cancel_queue":
@@ -338,6 +344,20 @@ def create_app(token: str, worker: Worker):
             await query.edit_message_text(
                 text, reply_markup=_build_main_keyboard(lang)
             )
+
+        elif data.startswith("cancel_item_"):
+            item_id = data.replace("cancel_item_", "")
+            ok = await worker.cancel_single_item(uid, item_id)
+            if ok:
+                await query.edit_message_text(
+                    f"✅ تم إلغاء العنصر {item_id}",
+                    reply_markup=_build_main_keyboard(lang),
+                )
+            else:
+                await query.edit_message_text(
+                    "⚠️ لم يعد بالإمكان إلغاؤه (ربما بدأت معالجته أو لم يعد موجوداً).",
+                    reply_markup=_build_main_keyboard(lang),
+                )
 
         elif data == "my_account":
             pp = user.plan_params()
@@ -387,9 +407,13 @@ def create_app(token: str, worker: Worker):
 
         elif data == "set_split":
             vals = [("5", "5"), ("7", "7"), ("9", "9")]
+            markup = _build_value_keyboard(lang, vals, "split_")
+            markup.inline_keyboard.insert(0, [
+                InlineKeyboardButton("✏️ مخصص", callback_data="split_custom")
+            ])
             await query.edit_message_text(
                 t(lang, "split_label"),
-                reply_markup=_build_value_keyboard(lang, vals, "split_"),
+                reply_markup=markup,
             )
 
         elif data.startswith("split_"):
@@ -454,6 +478,46 @@ def create_app(token: str, worker: Worker):
                 reply_markup=_build_platforms_keyboard(lang, user),
             )
 
+    async def _start_split_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_text("أرسل مدة التقسيم بالدقائق (رقم بين 3 و 9):")
+        return SPLIT_CUSTOM
+
+    async def _on_split_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        uid = update.effective_user.id
+        text = update.message.text.strip()
+        try:
+            val = int(text)
+            if val < 3 or val > 9:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("❌ الرقم غير صالح. أرسل رقماً بين 3 و 9:")
+            return SPLIT_CUSTOM
+        users = await store.get("users")
+        u_data = users.get(str(uid))
+        if u_data:
+            u_data["split_minutes"] = val
+            users[str(uid)] = u_data
+            await store.save("users")
+            user = User(**u_data)
+            lang = user.language
+            await update.message.reply_text(
+                f"✅ تم تحديث التقسيم إلى {val} دقيقة",
+                reply_markup=_build_settings_keyboard(lang, user),
+            )
+        return ConversationHandler.END
+
+    split_custom_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(_start_split_custom, pattern="^split_custom$")],
+        states={
+            SPLIT_CUSTOM: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, _on_split_custom)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
+    )
+
     onboarding_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -466,9 +530,10 @@ def create_app(token: str, worker: Worker):
     )
 
     app.add_handler(onboarding_handler)
+    app.add_handler(split_custom_handler)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(callback_handler, pattern="^("
-        "main_menu|settings|my_queue|cancel_queue|my_account|my_schedule|help|"
+        "main_menu|settings|my_queue|cancel_queue|cancel_item_|my_account|my_schedule|help|"
         "set_speed|speed_|set_split|split_|set_schedule|sched_|"
         "set_platforms|toggle_platform_tiktok|toggle_platform_instagram|"
         "retry_|skip_"
