@@ -320,6 +320,7 @@ class WoopSocialPublisher:
     def schedule_post(
         self, media_id: str, schedule_at: str, description: str = "",
         cover_media_id: Optional[str] = None,
+        targets: Optional[list[dict]] = None,
     ) -> tuple[bool, str]:
         import requests
 
@@ -329,6 +330,30 @@ class WoopSocialPublisher:
         media_list = [{"type": "MEDIA_LIBRARY", "mediaId": media_id}]
         if cover_media_id:
             media_list.append({"type": "IMAGE", "mediaId": cover_media_id})
+
+        if targets is None:
+            targets = [{"platform": "TIKTOK", "account_id": self._account_id}]
+
+        social_accounts = []
+        for tgt in targets:
+            platform = tgt["platform"]
+            account_id = tgt["account_id"]
+            account = {
+                "platform": platform,
+                "socialAccountId": account_id,
+                "postType": "REELS" if platform == "INSTAGRAM" else "VIDEO",
+                "postMode": "DIRECT_POST",
+                "privacyLevel": "PUBLIC_TO_EVERYONE",
+                "allowComment": True,
+                "isYourBrand": False,
+                "isBrandedContent": False,
+                "isAiGeneratedContent": True,
+            }
+            if platform == "TIKTOK":
+                account["allowDuet"] = False
+                account["allowStitch"] = False
+                account["autoAddMusic"] = True
+            social_accounts.append(account)
 
         payload = {
             "content": [
@@ -342,22 +367,7 @@ class WoopSocialPublisher:
                 "scheduledFor": schedule_at,
             },
             "autoDeleteMediaAfterPublish": True,
-            "socialAccounts": [
-                {
-                    "platform": "TIKTOK",
-                    "socialAccountId": self._account_id,
-                    "postType": "VIDEO",
-                    "postMode": "DIRECT_POST",
-                    "privacyLevel": "PUBLIC_TO_EVERYONE",
-                    "allowComment": True,
-                    "allowDuet": False,
-                    "allowStitch": False,
-                    "isYourBrand": False,
-                    "isBrandedContent": False,
-                    "isAiGeneratedContent": True,
-                    "autoAddMusic": True,
-                }
-            ],
+            "socialAccounts": social_accounts,
         }
         headers = {
             "Authorization": f"Bearer {self._api_key}",
@@ -365,6 +375,7 @@ class WoopSocialPublisher:
         }
         last_err = ""
         cover_removed = False
+        removed_fields: dict[str, list[str]] = {}
         for attempt in range(1, 6):
             try:
                 resp = requests.post(
@@ -388,6 +399,21 @@ class WoopSocialPublisher:
                     logger.warning("WoopSocial does not support IMAGE type — removing cover and retrying")
                     payload["content"][0]["media"] = [payload["content"][0]["media"][0]]
                     cover_removed = True
+                    continue
+                # If a validation error mentions a specific field, remove it and retry
+                field_removed = False
+                if "validationErrors" in last_err or "unknown" in last_err.lower():
+                    for acct in payload["socialAccounts"]:
+                        platform = acct.get("platform", "")
+                        pf = acct.get("platform", "")
+                        pf_removed = removed_fields.setdefault(pf, [])
+                        for field in ("autoAddMusic", "allowDuet", "allowStitch"):
+                            if field in acct and field not in pf_removed:
+                                logger.warning("Removing field '%s' for %s and retrying", field, pf)
+                                del acct[field]
+                                pf_removed.append(field)
+                                field_removed = True
+                if field_removed:
                     continue
                 logger.warning(
                     "WoopSocial post attempt %d: %s %s",

@@ -81,6 +81,11 @@ L = {
         "free_trial_remaining": "⚡ تبقى لك @remaining جزء مجاني من @limit",
         "free_trial_expired": "⚠️ انتهت الأجزاء المجانية! اشترك لمواصلة النشر.",
         "free_trial_limit": "مجاني (@limit جزء)",
+        "platforms_label": "منصات النشر",
+        "platform_tiktok": "تيك توك",
+        "platform_instagram": "انستغرام",
+        "platform_no_account": "⚠️ لم تربط حساب @platform بعد.\nتواصل مع الدعم لربطه.",
+        "platform_min_one_required": "⚠️ يجب تفعيل منصة واحدة على الأقل.",
     },
     "en": {
         "start": "Welcome to TG2TikTok! 🎬\nSend a YouTube link to convert it into TikTok posts.",
@@ -164,6 +169,11 @@ L = {
         "free_trial_remaining": "⚡ @remaining of @limit free parts remaining",
         "free_trial_expired": "⚠️ Free trial expired! Subscribe to continue publishing.",
         "free_trial_limit": "Free (@limit parts)",
+        "platforms_label": "Publishing Platforms",
+        "platform_tiktok": "TikTok",
+        "platform_instagram": "Instagram",
+        "platform_no_account": "⚠️ You haven't linked a @platform account yet.\nContact support.",
+        "platform_min_one_required": "⚠️ At least one platform must be active.",
     },
 }
 

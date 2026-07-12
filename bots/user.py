@@ -45,7 +45,18 @@ def _build_settings_keyboard(lang: str, user: User):
                               callback_data="set_split")],
         [InlineKeyboardButton(f"⏰ {t(lang, 'schedule_label')}: {user.schedule_interval}",
                               callback_data="set_schedule")],
+        [InlineKeyboardButton("📡 " + t(lang, "platforms_label"), callback_data="set_platforms")],
         [InlineKeyboardButton(t(lang, "back"), callback_data="main_menu")],
+    ])
+
+
+def _build_platforms_keyboard(lang: str, user: User):
+    tk = "✅" if user.publish_tiktok else "⬜"
+    ig = "✅" if user.publish_instagram else "⬜"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🎵 {t(lang, 'platform_tiktok')} [{tk}]", callback_data="toggle_platform_tiktok")],
+        [InlineKeyboardButton(f"📸 {t(lang, 'platform_instagram')} [{ig}]", callback_data="toggle_platform_instagram")],
+        [InlineKeyboardButton(t(lang, "back"), callback_data="settings")],
     ])
 
 
@@ -410,6 +421,39 @@ def create_app(token: str, worker: Worker):
                 reply_markup=_build_settings_keyboard(lang, user),
             )
 
+        elif data == "set_platforms":
+            await query.edit_message_text(
+                t(lang, "platforms_label"),
+                reply_markup=_build_platforms_keyboard(lang, user),
+            )
+
+        elif data == "toggle_platform_tiktok":
+            if user.publish_tiktok and not user.publish_instagram:
+                await query.answer(t(lang, "platform_min_one_required"), show_alert=True)
+                return
+            user.publish_tiktok = not user.publish_tiktok
+            users[str(uid)] = user.__dict__
+            await store.save("users")
+            await query.edit_message_text(
+                t(lang, "platforms_label"),
+                reply_markup=_build_platforms_keyboard(lang, user),
+            )
+
+        elif data == "toggle_platform_instagram":
+            if user.publish_instagram and not user.publish_tiktok:
+                await query.answer(t(lang, "platform_min_one_required"), show_alert=True)
+                return
+            if not user.publish_instagram and not user.instagram_account_id:
+                await query.answer(t(lang, "platform_no_account", platform="Instagram"), show_alert=True)
+                return
+            user.publish_instagram = not user.publish_instagram
+            users[str(uid)] = user.__dict__
+            await store.save("users")
+            await query.edit_message_text(
+                t(lang, "platforms_label"),
+                reply_markup=_build_platforms_keyboard(lang, user),
+            )
+
     onboarding_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -426,6 +470,7 @@ def create_app(token: str, worker: Worker):
     app.add_handler(CallbackQueryHandler(callback_handler, pattern="^("
         "main_menu|settings|my_queue|cancel_queue|my_account|my_schedule|help|"
         "set_speed|speed_|set_split|split_|set_schedule|sched_|"
+        "set_platforms|toggle_platform_tiktok|toggle_platform_instagram|"
         "retry_|skip_"
         ")"))
     return app

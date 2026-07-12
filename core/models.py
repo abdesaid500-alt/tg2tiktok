@@ -43,6 +43,20 @@ class User:
     last_active: float = 0.0
     last_scheduled_at: Optional[float] = None
     daily_counts: dict = field(default_factory=dict)
+    instagram_account_id: str = ""
+    publish_tiktok: bool = True
+    publish_instagram: bool = False
+
+    def active_platforms(self) -> list[str]:
+        platforms = []
+        if self.publish_tiktok and self.woopsocial_account_id:
+            platforms.append("tiktok")
+        if self.publish_instagram and self.instagram_account_id:
+            platforms.append("instagram")
+        return platforms
+
+    def has_any_platform(self) -> bool:
+        return bool(self.active_platforms())
 
     def is_active(self) -> bool:
         if self.status != "active":

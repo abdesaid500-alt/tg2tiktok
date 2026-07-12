@@ -280,6 +280,24 @@ class Worker:
                 drive = self._get_drive()
                 publisher = self._get_publisher(user)
 
+                # --- بناء قائمة المنصات المستهدفة ---
+                targets = []
+                if "tiktok" in user.active_platforms():
+                    targets.append({"platform": "TIKTOK", "account_id": user.woopsocial_account_id})
+                if "instagram" in user.active_platforms():
+                    targets.append({"platform": "INSTAGRAM", "account_id": user.instagram_account_id})
+
+                if not targets:
+                    await self._notify.notify_user(uid, "⚠️ لم تربط أي حساب نشر فعّال. تحقق من الإعدادات.")
+                    return
+
+                platforms_ar = []
+                if "tiktok" in user.active_platforms():
+                    platforms_ar.append("تيك توك")
+                if "instagram" in user.active_platforms():
+                    platforms_ar.append("انستغرام")
+                platform_label = " و ".join(platforms_ar)
+
                 # --- 0. Cleanup old WoopSocial media to free storage ---
                 await asyncio.to_thread(publisher.cleanup_media_storage)
 
@@ -322,7 +340,7 @@ class Worker:
 
                     # 2. رفع إلى WoopSocial
                     await self._notify.notify_user(
-                        uid, f"📤 ({i + 1}/{len(parts)}) الرفع على ووب سوشل..."
+                        uid, f"📤 ({i + 1}/{len(parts)}) الرفع على {platform_label}..."
                     )
                     mid = await asyncio.to_thread(publisher.upload_media, dl_url)
                     if not mid:
@@ -334,13 +352,13 @@ class Worker:
                     media_ids.append(mid)
                     logger.info("Part %d WoopSocial OK: media_id=%s", i + 1, mid)
 
-                    # 3. جدولة على TikTok فوراً
+                    # 3. جدولة على كل المنصات فوراً
                     offset = buffer_minutes + (i * interval)
                     schedule_at = (now + timedelta(minutes=offset)).isoformat()
                     title_short = item.video_title[:50] if item.video_title else "فيديو"
                     tags = WoopSocialPublisher.hashtags_for_part(i, len(parts))
                     caption = f"{title_short} | {i + 1}/{len(parts)}\n{tags}"
-                    ok, err = await asyncio.to_thread(publisher.schedule_post, mid, schedule_at, caption, cover_media_id)
+                    ok, err = await asyncio.to_thread(publisher.schedule_post, mid, schedule_at, caption, cover_media_id, targets=targets)
                     if ok:
                         self._schedule_drive_deletion(dl_url)
                         success_count += 1

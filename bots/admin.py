@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 (
     ASK_TELEGRAM_ID, ASK_PLAN, ASK_DAYS, ASK_MESSAGE,
     ASK_API_KEY, ASK_PROJECT_ID, ASK_ACCOUNT_ID,
-) = range(7)
+    ASK_INSTAGRAM_ACCOUNT_ID,
+) = range(8)
 
 
 def _is_admin(update: Update, admin_id: int) -> bool:
@@ -43,6 +44,10 @@ def _user_details_keyboard(uid: int, user: User = None):
                         InlineKeyboardButton("🗑 حذف", callback_data=f"admin_delete_{uid}")])
     buttons.append([InlineKeyboardButton("📋 تغيير الخطة", callback_data=f"admin_plan_{uid}")])
     buttons.append([InlineKeyboardButton("🌐 تغيير اللغة", callback_data=f"admin_lang_{uid}")])
+    if user and user.instagram_account_id:
+        buttons.append([InlineKeyboardButton("📸 تغيير انستغرام", callback_data=f"admin_ig_{uid}")])
+    else:
+        buttons.append([InlineKeyboardButton("📸 ربط انستغرام", callback_data=f"admin_ig_{uid}")])
     buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_users")])
     return InlineKeyboardMarkup(buttons)
 
@@ -229,6 +234,15 @@ def create_app(token: str, admin_id: int):
             await query.edit_message_text("أرسل معرف المستخدم (user_id):")
             return ASK_TELEGRAM_ID
 
+        elif data.startswith("admin_ig_"):
+            uid = data.replace("admin_ig_", "")
+            context.user_data["admin_ig_uid"] = uid
+            await query.edit_message_text(
+                "أرسل Instagram Account ID (أو أرسل 'skip' لإلغاء):"
+            )
+            context.user_data["admin_expected_state"] = "admin_ig"
+            return
+
     async def _show_users(query, users_data, page):
         per_page = 5
         total_pages = max(1, (len(users_data) + per_page - 1) // per_page)
@@ -264,7 +278,7 @@ def create_app(token: str, admin_id: int):
         entry_points=[CallbackQueryHandler(admin_callback, pattern="^admin_"
             r"(add|stats|users|users_page_\d+|stop_\d+|activate_\d+|"
             r"lang_\d+(?:_(?:ar|en))?|delete_\d+|"
-            r"plan_\d+|setplan:|setplan_|back|noop|user_\d+)")],
+            r"plan_\d+|setplan:|setplan_|back|noop|user_\d+|ig_\d+)")],
         states={
             ASK_TELEGRAM_ID: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, _on_telegram_id)
@@ -278,6 +292,9 @@ def create_app(token: str, admin_id: int):
             ],
             ASK_ACCOUNT_ID: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, _on_account_id)
+            ],
+            ASK_INSTAGRAM_ACCOUNT_ID: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, _on_instagram_account_id)
             ],
         },
         fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
@@ -294,10 +311,16 @@ def create_app(token: str, admin_id: int):
         fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
     )
 
+    admin_ig_handler = MessageHandler(
+        filters.TEXT & ~filters.COMMAND & ~filters.UpdateType.CHANNEL,
+        _on_admin_ig_text,
+    )
+
     app.bot_data["admin_id"] = admin_id
     app.add_handler(CommandHandler("start", start))
     app.add_handler(admin_handler)
     app.add_handler(broadcast_handler)
+    app.add_handler(admin_ig_handler)
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
 
     return app
@@ -356,12 +379,26 @@ async def _on_account_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update, context.application.bot_data.get("admin_id", 0)):
         return ConversationHandler.END
 
+    context.user_data["new_account_id"] = update.message.text.strip()
+    await update.message.reply_text(
+        "أرسل Instagram Account ID (أو أرسل 'skip' لتخطي هذه الخطوة):"
+    )
+    return ASK_INSTAGRAM_ACCOUNT_ID
+
+
+async def _on_instagram_account_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update, context.application.bot_data.get("admin_id", 0)):
+        return ConversationHandler.END
+
     uid = context.user_data["new_uid"]
     plan = context.user_data["new_plan"]
     api_key = context.user_data["new_api_key"]
     project_id = context.user_data["new_project_id"]
-    account_id = update.message.text.strip()
+    account_id = context.user_data["new_account_id"]
     username = context.user_data.get("new_username", str(uid))
+
+    ig_text = update.message.text.strip()
+    ig_account_id = "" if ig_text.lower() == "skip" else ig_text
 
     pp = PLANS.get(plan, PLANS["trial"])
     now = time.time()
@@ -375,6 +412,8 @@ async def _on_account_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         woopsocial_api_key=api_key,
         woopsocial_project_id=project_id,
         woopsocial_account_id=account_id,
+        instagram_account_id=ig_account_id,
+        publish_instagram=bool(ig_account_id),
     )
 
     users_data = await store.get("users")
@@ -394,6 +433,33 @@ async def _on_account_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=_main_keyboard(),
     )
     return ConversationHandler.END
+
+
+async def _on_admin_ig_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update, context.application.bot_data.get("admin_id", 0)):
+        return
+    expected = context.user_data.get("admin_expected_state")
+    if expected != "admin_ig":
+        return
+    uid = context.user_data.get("admin_ig_uid")
+    if not uid:
+        return
+    text = update.message.text.strip()
+    users_data = await store.get("users")
+    if uid not in users_data:
+        await update.message.reply_text("❌ المستخدم غير موجود.")
+        context.user_data.pop("admin_expected_state", None)
+        context.user_data.pop("admin_ig_uid", None)
+        return
+    if text.lower() != "skip":
+        users_data[uid]["instagram_account_id"] = text
+        users_data[uid]["publish_instagram"] = True
+        await store.save("users")
+        await update.message.reply_text(f"✅ تم ربط حساب Instagram للمستخدم {uid}")
+    else:
+        await update.message.reply_text(f"⏭️ تم تخطي ربط Instagram للمستخدم {uid}")
+    context.user_data.pop("admin_expected_state", None)
+    context.user_data.pop("admin_ig_uid", None)
 
 
 async def _start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
