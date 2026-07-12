@@ -5,6 +5,7 @@ import json
 import logging
 import shutil
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
@@ -163,31 +164,7 @@ async def split_and_speed(
                 "ملف الفيديو تالف أو غير مكتمل.\nحاول إرسال الرابط مجدداً."
             )
 
-        probe = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json",
-             "-show_format", "-show_streams", input_path],
-            capture_output=True, text=True, timeout=30,
-        )
-        info = {}
-        try:
-            info = json.loads(probe.stdout) if probe.stdout.strip() else {}
-        except json.JSONDecodeError:
-            pass
-
-        total_dur = 0.0
-        fmt = info.get("format", {})
-        if "duration" in fmt:
-            total_dur = float(fmt["duration"])
-        else:
-            for s in info.get("streams", []):
-                if s.get("codec_type") == "video" and "duration" in s:
-                    total_dur = max(total_dur, float(s["duration"]))
-        if total_dur <= 0:
-            total_dur = _get_duration(input_path)
-
-        has_audio = any(
-            s.get("codec_type") == "audio" for s in info.get("streams", [])
-        )
+        total_dur, has_audio = _probe_video(input_path)
 
         if total_dur < min_part_seconds:
             out = os.path.join(output_dir, "part_001.mp4")
@@ -195,7 +172,7 @@ async def split_and_speed(
             return [out]
 
         chunk = split_minutes * 60
-        parts = []
+        segments = []
         start = 0.0
         idx = 1
 
@@ -203,26 +180,58 @@ async def split_and_speed(
             dur = chunk
             if start + dur > total_dur:
                 dur = total_dur - start
-
             part_file = os.path.join(output_dir, f"part_{idx:03d}.mp4")
             overlay_img = _make_text_overlay(output_dir, idx)
-            t0 = time.time()
-            _run_ffmpeg(input_path, part_file, speed, has_audio, start, dur, text_overlay=overlay_img)
-            elapsed = time.time() - t0
-            logger.info("Part %03d done in %.1fs (start=%.1f dur=%.1f)", idx, elapsed, start, dur)
-
-            actual = _get_duration(part_file)
-            if actual < min_part_seconds and parts:
-                os.remove(part_file)
-            else:
-                parts.append(part_file)
-
+            segments.append((input_path, part_file, speed, has_audio, start, dur, overlay_img))
             start += chunk - overlap
             idx += 1
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(_run_ffmpeg, *s) for s in segments]
+            for f in futures:
+                f.result()
+
+        parts = []
+        for s in segments:
+            pf = s[1]
+            if os.path.getsize(pf) < 10000:
+                os.remove(pf)
+                continue
+            parts.append(pf)
+            logger.info("Part done: %s (%.1fMB)", pf, os.path.getsize(pf) / 1e6)
 
         return parts
 
     return await loop.run_in_executor(None, _run)
+
+
+def _probe_video(path: str) -> tuple[float, bool]:
+    probe = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-print_format", "json",
+         "-show_format", "-show_streams", path],
+        capture_output=True, text=True, timeout=30,
+    )
+    info = {}
+    try:
+        info = json.loads(probe.stdout) if probe.stdout.strip() else {}
+    except json.JSONDecodeError:
+        pass
+
+    total_dur = 0.0
+    fmt = info.get("format", {})
+    if "duration" in fmt:
+        total_dur = float(fmt["duration"])
+    else:
+        for s in info.get("streams", []):
+            if s.get("codec_type") == "video" and "duration" in s:
+                total_dur = max(total_dur, float(s["duration"]))
+    if total_dur <= 0:
+        total_dur = _get_duration(path)
+
+    has_audio = any(
+        s.get("codec_type") == "audio" for s in info.get("streams", [])
+    )
+    return total_dur, has_audio
 
 
 def _run_ffmpeg(
@@ -250,13 +259,13 @@ def _run_ffmpeg(
             cmd.extend(["-filter_complex", f"{vf};{ac}", "-map", "[outv]", "-map", "[outa]"])
         else:
             cmd.extend(["-filter_complex", vf, "-map", "[outv]"])
-        cmd.extend(["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"])
+        cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "28"])
     else:
         cmd.extend([
             "-vf",
             f"setpts={1/speed}*PTS,"
             f"scale=1080:1920:force_original_aspect_ratio=decrease,setsar=1",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
         ])
         if has_audio:
             cmd.extend(["-af", f"atempo={speed}"])
@@ -264,7 +273,6 @@ def _run_ffmpeg(
     cmd.extend([
         "-t", str(t),
         "-avoid_negative_ts", "make_zero",
-        "-movflags", "+faststart",
         output_path,
     ])
 
