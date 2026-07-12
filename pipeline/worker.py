@@ -425,7 +425,17 @@ class Worker:
                     await self._notify.notify_user_markup(uid, "\n".join(msg_parts), markup)
             else:
                 remaining = max(0, FREE_PARTS_LIMIT - user.free_parts_used)
-                msg = f"✅ تم تجهيز {len(parts)} جزء من الفيديو!"
+                await self._notify.notify_user(uid, f"📤 جاري إرسال {len(parts)} أجزاء لك عبر البوت...")
+                sent = 0
+                for i, p in enumerate(parts, 1):
+                    size_mb = os.path.getsize(p) / 1e6
+                    if size_mb > 48:
+                        await self._notify.notify_user(uid, f"⚠️ الجزء {i} كبير جداً ({size_mb:.0f}MB) ولا يمكن إرساله عبر تيليغرام. جرب الخطة المدفوعة للنشر المباشر.")
+                        continue
+                    await self._notify.send_video(uid, p, caption=f"🎬 الجزء {i}/{len(parts)}")
+                    sent += 1
+                if sent:
+                    await self._notify.notify_user(uid, f"✅ تم إرسال {sent}/{len(parts)} أجزاء!")
                 plans_text = (
                     "\n\n━━━ 📋 خطط الاشتراك ━━━\n"
                 )
@@ -433,7 +443,7 @@ class Worker:
                 for key, pp in PLANS.items():
                     name = {"trial": "تجريبي", "basic": "أساسي", "pro": "احترافي", "unlimited": "غير محدود"}.get(key, key)
                     plans_text += f"\n• {name}: {pp.daily_limit} فيديو/يوم | {pp.queue_limit} طابور | {pp.duration_days} يوم"
-                msg += plans_text
+                msg = plans_text
                 msg += f"\n\n💬 تواصل مع الدعم: @{SUPPORT_USERNAME}"
                 if remaining > 0:
                     msg += f"\n⚡ تبقى لك {remaining} من {FREE_PARTS_LIMIT} جزء مجاني للتجربة"

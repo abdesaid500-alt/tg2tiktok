@@ -1,8 +1,9 @@
 from typing import Protocol, Optional
 
-from telegram import InlineKeyboardMarkup
+from telegram import InlineKeyboardMarkup, InputFile
 
 
 class Notifier(Protocol):
     async def notify_user(self, user_id: int, message: str) -> None: ...
     async def notify_user_markup(self, user_id: int, message: str, markup: Optional[InlineKeyboardMarkup] = None) -> None: ...
+    async def send_video(self, user_id: int, video_path: str, caption: str = "") -> None: ...

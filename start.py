@@ -3,6 +3,8 @@ import logging
 import os
 import sys
 
+from telegram import InputFile
+
 from core.config import Settings
 from core import storage
 from pipeline.worker import Worker
@@ -31,6 +33,15 @@ class _TgNotifier:
             await self.bot.send_message(chat_id=user_id, text=message, reply_markup=markup)
         except Exception as e:
             logger.warning("Notify markup failed for %d: %s", user_id, e)
+
+    async def send_video(self, user_id: int, video_path: str, caption: str = "") -> None:
+        if not self.bot:
+            return
+        try:
+            with open(video_path, "rb") as f:
+                await self.bot.send_video(chat_id=user_id, video=InputFile(f, filename="part.mp4"), caption=caption)
+        except Exception as e:
+            logger.warning("Send video failed for %d: %s", user_id, e)
 
 
 async def _health_server(port: int, stop: asyncio.Event):
