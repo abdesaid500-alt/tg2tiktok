@@ -3,6 +3,7 @@ import os
 import sys
 import asyncio
 import threading
+import json
 
 logging.basicConfig(
     level=logging.INFO,
@@ -14,11 +15,14 @@ logger.info("PORT='%s', PID=%d", os.environ.get("PORT", ""), os.getpid())
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+state = {"step": "booting"}
+
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
+        self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(b"OK")
+        self.wfile.write(json.dumps(state).encode())
     def log_message(self, *a): pass
 
 PORT = int(os.environ.get("PORT", 10000))
@@ -27,8 +31,15 @@ t = threading.Thread(target=lambda: HTTPServer(("0.0.0.0", PORT), H).serve_forev
 t.start()
 
 # Install deps at runtime (build-time pip fails on Render)
+state["step"] = "pip_install"
 import subprocess
-subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", "-r", "requirements.txt"])
+r = subprocess.run([sys.executable, "-m", "pip", "install", "--no-cache-dir", "-r", "requirements.txt"], capture_output=True, text=True, timeout=180)
+if r.returncode != 0:
+    logger.error("pip install failed (exit=%d): %s", r.returncode, r.stderr[-1000:])
+    state["step"] = "pip_failed"
+    sys.exit(1)
+logger.info("pip install done")
+state["step"] = "pip_done"
 
 from core.config import Settings
 from core import storage
