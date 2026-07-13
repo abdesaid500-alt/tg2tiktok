@@ -11,6 +11,7 @@ from telegram.ext import (
 from core.models import User, PLANS
 from core import storage as store
 from core.config import SUPPORT_USERNAME
+from core.cookies_store import get_cookies_b64, set_cookies_b64, get_last_update_info
 from core.i18n import t
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,8 @@ logger = logging.getLogger(__name__)
     ASK_TELEGRAM_ID, ASK_PLAN, ASK_DAYS, ASK_MESSAGE,
     ASK_API_KEY, ASK_PROJECT_ID, ASK_ACCOUNT_ID,
     ASK_INSTAGRAM_ACCOUNT_ID, ASK_CUSTOM_DAYS, ASK_EXTEND_DAYS,
-) = range(10)
+    WAITING_COOKIES,
+) = range(11)
 
 
 def _is_admin(update: Update, admin_id: int) -> bool:
@@ -343,14 +345,121 @@ def create_app(token: str, admin_id: int):
         _on_admin_ig_text,
     )
 
+    async def _cmd_update_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not _is_admin(update, admin_id):
+            await update.message.reply_text(t("ar", "not_admin"))
+            return ConversationHandler.END
+        await update.message.reply_text(
+            "🍪 أرسل ملف الكوكيز (.txt بصيغة Netscape) أو الصق محتوى الكوكيز كنص مباشر:"
+        )
+        return WAITING_COOKIES
+
+    async def _on_cookies_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not _is_admin(update, admin_id):
+            return ConversationHandler.END
+        doc = update.message.document
+        if not doc.file_name.endswith(".txt"):
+            await update.message.reply_text("❌ الملف يجب أن يكون .txt. حاول مجدداً أو أرسل /cancel.")
+            return WAITING_COOKIES
+        try:
+            file = await context.bot.get_file(doc.file_id)
+            raw = await file.download_as_bytearray()
+            text = raw.decode("utf-8", errors="replace")
+        except Exception as e:
+            await update.message.reply_text(f"❌ فشل قراءة الملف: {e}. حاول مجدداً.")
+            return WAITING_COOKIES
+        if not _looks_like_cookies(text):
+            await update.message.reply_text("❌ الملف لا يحتوي على كوكيز بصيغة صحيحة. حاول مجدداً.")
+            return WAITING_COOKIES
+        import base64
+        cookies_b64 = base64.b64encode(text.encode()).decode()
+        try:
+            await set_cookies_b64(cookies_b64, update.effective_user.id)
+            now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
+            await update.message.reply_text(
+                f"✅ تم تحديث كوكيز YouTube بنجاح.\n"
+                f"🕐 الوقت: {now_str}\n"
+                f"ستُستعمل في كل التحميلات الجديدة فوراً."
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ فشل التحديث: {e}. حاول مجدداً بـ /update_cookies.")
+        return ConversationHandler.END
+
+    async def _on_cookies_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not _is_admin(update, admin_id):
+            return ConversationHandler.END
+        text = update.message.text.strip()
+        if not _looks_like_cookies(text):
+            await update.message.reply_text(
+                "❌ النص لا يشبه صيغة كوكيز صالحة. أرسل ملف .txt أو الصق محتوى الكوكيز الصحيح.\n"
+                "hint: يجب أن يبدأ بـ # Netscape HTTP Cookie File أو يحتوي على أسطر مفصولة بـ tab."
+            )
+            return WAITING_COOKIES
+        import base64
+        cookies_b64 = base64.b64encode(text.encode()).decode()
+        try:
+            await set_cookies_b64(cookies_b64, update.effective_user.id)
+            now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
+            await update.message.reply_text(
+                f"✅ تم تحديث كوكيز YouTube بنجاح.\n"
+                f"🕐 الوقت: {now_str}\n"
+                f"ستُستعمل في كل التحميلات الجديدة فوراً."
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ فشل التحديث: {e}. حاول مجدداً بـ /update_cookies.")
+        return ConversationHandler.END
+
+    async def _cmd_cookies_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not _is_admin(update, admin_id):
+            await update.message.reply_text(t("ar", "not_admin"))
+            return
+        info = await get_last_update_info()
+        if info:
+            ts = info.get("updated_at")
+            by = info.get("updated_by")
+            time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else "غير معروف"
+            await update.message.reply_text(
+                f"🍪 حالة كوكيز YouTube:\n"
+                f"🕐 آخر تحديث: {time_str}\n"
+                f"👤 بواسطة: {by}"
+            )
+        else:
+            await update.message.reply_text(
+                "⚠️ لم يتم تحديث الكوكيز من البوت بعد — يُستعمل env variable الافتراضي."
+            )
+
+    update_cookies_handler = ConversationHandler(
+        entry_points=[CommandHandler("update_cookies", _cmd_update_cookies)],
+        states={
+            WAITING_COOKIES: [
+                MessageHandler(filters.Document.FileExtension("txt"), _on_cookies_document),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, _on_cookies_text),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
+        allow_reentry=True,
+    )
+
     app.bot_data["admin_id"] = admin_id
     app.add_handler(CommandHandler("start", start))
     app.add_handler(admin_handler)
     app.add_handler(broadcast_handler)
     app.add_handler(admin_ig_handler)
+    app.add_handler(update_cookies_handler)
+    app.add_handler(CommandHandler("cookies_status", _cmd_cookies_status))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
 
     return app
+
+
+def _looks_like_cookies(text: str) -> bool:
+    lines = [l.strip() for l in text.splitlines() if l.strip() and not l.startswith("#")]
+    tab_lines = [l for l in lines if "\t" in l]
+    if tab_lines:
+        return True
+    if any(l.startswith("# Netscape") or l.startswith("# HTTP") for l in text.splitlines()):
+        return True
+    return False
 
 
 async def _on_telegram_id(update: Update, context: ContextTypes.DEFAULT_TYPE):

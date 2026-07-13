@@ -12,6 +12,7 @@ from typing import Optional
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from core.config import Settings, SUPPORT_USERNAME
+from core.cookies_store import get_cookies_b64
 from core.models import User, QueueItem, PLANS, FREE_PARTS_LIMIT
 from core import storage as store
 from core.notifier import Notifier
@@ -267,10 +268,11 @@ class Worker:
             item_dir = os.path.join(self._temp_dir, f"{uid}_{item.id}")
             os.makedirs(item_dir, exist_ok=True)
 
+            cookies_b64 = await get_cookies_b64(fallback=self._settings.yt_cookies_b64)
             info = await download_video(
                 item.youtube_url,
                 item_dir,
-                self._settings.yt_cookies_b64,
+                cookies_b64,
                 self._settings.yt_po_token,
                 self._settings.yt_visitor_data,
             )
