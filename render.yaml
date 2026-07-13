@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: tg2tiktok
+    runtime: docker
+    repo: https://github.com/abdesaid500-alt/tg2tiktok
+    branch: main
+    plan: free
+    envVars:
+      - key: USER_BOT_TOKEN
+        sync: false
+      - key: ADMIN_BOT_TOKEN
+        sync: false
+      - key: ADMIN_ID
+        sync: false
+      - key: DRIVE_FOLDER_ID
+        sync: false
+      - key: TOKEN_PICKLE_B64
+        sync: false
+      - key: YT_COOKIES_B64
+        sync: false
+      - key: YT_PO_TOKEN
+        sync: false
+      - key: YT_VISITOR_DATA
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: DATA_DIR
+        value: /data
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
+    healthCheckPath: /
