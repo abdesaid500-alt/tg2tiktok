@@ -46,9 +46,19 @@ class _TgNotifier:
 
 async def _health_server(port: int, stop: asyncio.Event):
     async def handle(reader, writer):
-        writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: text/plain\r\n\r\nOK")
-        await writer.drain()
-        writer.close()
+        try:
+            _ = await reader.read(65536)
+        except Exception:
+            pass
+        try:
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: text/plain\r\n\r\nOK")
+            await writer.drain()
+        except Exception:
+            pass
+        try:
+            writer.close()
+        except Exception:
+            pass
 
     server = await asyncio.start_server(handle, "0.0.0.0", port)
     async with server:

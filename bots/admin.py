@@ -292,6 +292,70 @@ def create_app(token: str, admin_id: int):
                     reply_markup=_main_keyboard(),
                 )
 
+    async def _cmd_update_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not _is_admin(update, admin_id):
+            await update.message.reply_text(t("ar", "not_admin"))
+            return ConversationHandler.END
+        await update.message.reply_text(
+            "🍪 أرسل ملف الكوكيز (.txt بصيغة Netscape) أو الصق محتوى الكوكيز كنص مباشر:"
+        )
+        return WAITING_COOKIES
+
+    async def _on_cookies_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not _is_admin(update, admin_id):
+            return ConversationHandler.END
+        doc = update.message.document
+        if not doc.file_name.endswith(".txt"):
+            await update.message.reply_text("❌ الملف يجب أن يكون .txt. حاول مجدداً أو أرسل /cancel.")
+            return WAITING_COOKIES
+        try:
+            file = await context.bot.get_file(doc.file_id)
+            raw = await file.download_as_bytearray()
+            text = raw.decode("utf-8", errors="replace")
+        except Exception as e:
+            await update.message.reply_text(f"❌ فشل قراءة الملف: {e}. حاول مجدداً.")
+            return WAITING_COOKIES
+        if not _looks_like_cookies(text):
+            await update.message.reply_text("❌ الملف لا يحتوي على كوكيز بصيغة صحيحة. حاول مجدداً.")
+            return WAITING_COOKIES
+        import base64
+        cookies_b64 = base64.b64encode(text.encode()).decode()
+        try:
+            await set_cookies_b64(cookies_b64, update.effective_user.id)
+            now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
+            await update.message.reply_text(
+                f"✅ تم تحديث كوكيز YouTube بنجاح.\n"
+                f"🕐 الوقت: {now_str}\n"
+                f"ستُستعمل في كل التحميلات الجديدة فوراً."
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ فشل التحديث: {e}. حاول مجدداً بـ /update_cookies.")
+        return ConversationHandler.END
+
+    async def _on_cookies_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not _is_admin(update, admin_id):
+            return ConversationHandler.END
+        text = update.message.text.strip()
+        if not _looks_like_cookies(text):
+            await update.message.reply_text(
+                "❌ النص لا يشبه صيغة كوكيز صالحة. أرسل ملف .txt أو الصق محتوى الكوكيز الصحيح.\n"
+                "hint: يجب أن يبدأ بـ # Netscape HTTP Cookie File أو يحتوي على أسطر مفصولة بـ tab."
+            )
+            return WAITING_COOKIES
+        import base64
+        cookies_b64 = base64.b64encode(text.encode()).decode()
+        try:
+            await set_cookies_b64(cookies_b64, update.effective_user.id)
+            now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
+            await update.message.reply_text(
+                f"✅ تم تحديث كوكيز YouTube بنجاح.\n"
+                f"🕐 الوقت: {now_str}\n"
+                f"ستُستعمل في كل التحميلات الجديدة فوراً."
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ فشل التحديث: {e}. حاول مجدداً بـ /update_cookies.")
+        return ConversationHandler.END
+
     async def _show_users(query, users_data, page):
         per_page = 5
         total_pages = max(1, (len(users_data) + per_page - 1) // per_page)
@@ -378,70 +442,6 @@ def create_app(token: str, admin_id: int):
         filters.TEXT & ~filters.COMMAND & ~filters.UpdateType.CHANNEL_POST,
         _on_admin_ig_text,
     )
-
-    async def _cmd_update_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not _is_admin(update, admin_id):
-            await update.message.reply_text(t("ar", "not_admin"))
-            return ConversationHandler.END
-        await update.message.reply_text(
-            "🍪 أرسل ملف الكوكيز (.txt بصيغة Netscape) أو الصق محتوى الكوكيز كنص مباشر:"
-        )
-        return WAITING_COOKIES
-
-    async def _on_cookies_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not _is_admin(update, admin_id):
-            return ConversationHandler.END
-        doc = update.message.document
-        if not doc.file_name.endswith(".txt"):
-            await update.message.reply_text("❌ الملف يجب أن يكون .txt. حاول مجدداً أو أرسل /cancel.")
-            return WAITING_COOKIES
-        try:
-            file = await context.bot.get_file(doc.file_id)
-            raw = await file.download_as_bytearray()
-            text = raw.decode("utf-8", errors="replace")
-        except Exception as e:
-            await update.message.reply_text(f"❌ فشل قراءة الملف: {e}. حاول مجدداً.")
-            return WAITING_COOKIES
-        if not _looks_like_cookies(text):
-            await update.message.reply_text("❌ الملف لا يحتوي على كوكيز بصيغة صحيحة. حاول مجدداً.")
-            return WAITING_COOKIES
-        import base64
-        cookies_b64 = base64.b64encode(text.encode()).decode()
-        try:
-            await set_cookies_b64(cookies_b64, update.effective_user.id)
-            now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
-            await update.message.reply_text(
-                f"✅ تم تحديث كوكيز YouTube بنجاح.\n"
-                f"🕐 الوقت: {now_str}\n"
-                f"ستُستعمل في كل التحميلات الجديدة فوراً."
-            )
-        except Exception as e:
-            await update.message.reply_text(f"❌ فشل التحديث: {e}. حاول مجدداً بـ /update_cookies.")
-        return ConversationHandler.END
-
-    async def _on_cookies_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not _is_admin(update, admin_id):
-            return ConversationHandler.END
-        text = update.message.text.strip()
-        if not _looks_like_cookies(text):
-            await update.message.reply_text(
-                "❌ النص لا يشبه صيغة كوكيز صالحة. أرسل ملف .txt أو الصق محتوى الكوكيز الصحيح.\n"
-                "hint: يجب أن يبدأ بـ # Netscape HTTP Cookie File أو يحتوي على أسطر مفصولة بـ tab."
-            )
-            return WAITING_COOKIES
-        import base64
-        cookies_b64 = base64.b64encode(text.encode()).decode()
-        try:
-            await set_cookies_b64(cookies_b64, update.effective_user.id)
-            now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
-            await update.message.reply_text(
-                f"✅ تم تحديث كوكيز YouTube بنجاح.\n"
-                f"🕐 الوقت: {now_str}\n"
-                f"ستُستعمل في كل التحميلات الجديدة فوراً."
-            )
-        except Exception as e:
-            await update.message.reply_text(f"❌ فشل التحديث: {e}. حاول مجدداً بـ /update_cookies.")
-        return ConversationHandler.END
 
     app.bot_data["admin_id"] = admin_id
     app.add_handler(CommandHandler("start", start))
