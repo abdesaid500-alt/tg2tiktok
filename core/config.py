@@ -37,5 +37,5 @@ class Settings:
             supabase_service_key=os.environ.get("SUPABASE_SERVICE_KEY", ""),
             data_dir=os.environ.get("DATA_DIR", "data"),
             temp_dir=os.environ.get("TEMP_DIR", "temp_videos"),
-            port=8080,
+            port=int(os.environ.get("PORT", 10000)),
         )

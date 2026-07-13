@@ -21,7 +21,7 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(b"OK")
     def log_message(self, *a): pass
 
-PORT = 8080
+PORT = int(os.environ.get("PORT", 10000))
 logger.info("Starting health server on %d", PORT)
 t = threading.Thread(target=lambda: HTTPServer(("0.0.0.0", PORT), H).serve_forever(), daemon=True)
 t.start()
