@@ -34,6 +34,8 @@ def _main_keyboard():
          InlineKeyboardButton("📊 إحصائيات", callback_data="admin_stats")],
         [InlineKeyboardButton("➕ إضافة مستخدم", callback_data="admin_add"),
          InlineKeyboardButton("📢 بث", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("🍪 تحديث الكوكيز", callback_data="admin_cookies"),
+         InlineKeyboardButton("📋 حالة الكوكيز", callback_data="admin_cookies_status")],
     ])
 
 
@@ -266,6 +268,30 @@ def create_app(token: str, admin_id: int):
             )
             return ASK_EXTEND_DAYS
 
+        elif data == "admin_cookies":
+            await query.edit_message_text(
+                "🍪 أرسل ملف الكوكيز (.txt بصيغة Netscape) أو الصق محتوى الكوكيز كنص مباشر:"
+            )
+            return WAITING_COOKIES
+
+        elif data == "admin_cookies_status":
+            info = await get_last_update_info()
+            if info:
+                ts = info.get("updated_at")
+                by = info.get("updated_by")
+                time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else "غير معروف"
+                await query.edit_message_text(
+                    f"🍪 حالة كوكيز YouTube:\n"
+                    f"🕐 آخر تحديث: {time_str}\n"
+                    f"👤 بواسطة: {by}",
+                    reply_markup=_main_keyboard(),
+                )
+            else:
+                await query.edit_message_text(
+                    "⚠️ لم يتم تحديث الكوكيز من البوت بعد — يُستعمل env variable الافتراضي.",
+                    reply_markup=_main_keyboard(),
+                )
+
     async def _show_users(query, users_data, page):
         per_page = 5
         total_pages = max(1, (len(users_data) + per_page - 1) // per_page)
@@ -298,10 +324,14 @@ def create_app(token: str, admin_id: int):
         )
 
     admin_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_callback, pattern="^admin_"
-            r"(add|stats|users|users_page_\d+|stop_\d+|activate_\d+|"
-            r"lang_\d+(?:_(?:ar|en))?|delete_\d+|"
-            r"plan_\d+|setplan:|setplan_|back|noop|user_\d+|ig_\d+|extend_\d+|expire_\d+)")],
+        entry_points=[
+            CallbackQueryHandler(admin_callback, pattern="^admin_"
+                r"(add|stats|users|users_page_\d+|stop_\d+|activate_\d+|"
+                r"lang_\d+(?:_(?:ar|en))?|delete_\d+|"
+                r"plan_\d+|setplan:|setplan_|back|noop|user_\d+|ig_\d+|"
+                r"extend_\d+|expire_\d+|cookies|cookies_status)"),
+            CommandHandler("update_cookies", _cmd_update_cookies),
+        ],
         states={
             ASK_TELEGRAM_ID: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, _on_telegram_id)
@@ -324,6 +354,10 @@ def create_app(token: str, admin_id: int):
             ],
             ASK_EXTEND_DAYS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, _on_admin_extend)
+            ],
+            WAITING_COOKIES: [
+                MessageHandler(filters.Document.FileExtension("txt"), _on_cookies_document),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, _on_cookies_text),
             ],
         },
         fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
@@ -409,44 +443,11 @@ def create_app(token: str, admin_id: int):
             await update.message.reply_text(f"❌ فشل التحديث: {e}. حاول مجدداً بـ /update_cookies.")
         return ConversationHandler.END
 
-    async def _cmd_cookies_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not _is_admin(update, admin_id):
-            await update.message.reply_text(t("ar", "not_admin"))
-            return
-        info = await get_last_update_info()
-        if info:
-            ts = info.get("updated_at")
-            by = info.get("updated_by")
-            time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else "غير معروف"
-            await update.message.reply_text(
-                f"🍪 حالة كوكيز YouTube:\n"
-                f"🕐 آخر تحديث: {time_str}\n"
-                f"👤 بواسطة: {by}"
-            )
-        else:
-            await update.message.reply_text(
-                "⚠️ لم يتم تحديث الكوكيز من البوت بعد — يُستعمل env variable الافتراضي."
-            )
-
-    update_cookies_handler = ConversationHandler(
-        entry_points=[CommandHandler("update_cookies", _cmd_update_cookies)],
-        states={
-            WAITING_COOKIES: [
-                MessageHandler(filters.Document.FileExtension("txt"), _on_cookies_document),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, _on_cookies_text),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
-        allow_reentry=True,
-    )
-
     app.bot_data["admin_id"] = admin_id
     app.add_handler(CommandHandler("start", start))
     app.add_handler(admin_handler)
     app.add_handler(broadcast_handler)
     app.add_handler(admin_ig_handler)
-    app.add_handler(update_cookies_handler)
-    app.add_handler(CommandHandler("cookies_status", _cmd_cookies_status))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
 
     return app
