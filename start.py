@@ -30,16 +30,19 @@ logger.info("Starting health server on %d", PORT)
 t = threading.Thread(target=lambda: HTTPServer(("0.0.0.0", PORT), H).serve_forever(), daemon=True)
 t.start()
 
-# Install deps at runtime (build-time pip fails on Render)
-state["step"] = "pip_install"
+# Install deps at runtime if not already installed (build-time pip may fail on Render)
+state["step"] = "check_deps"
 import subprocess
-r = subprocess.run([sys.executable, "-m", "pip", "install", "--no-cache-dir", "-r", "requirements.txt"], capture_output=True, text=True, timeout=180)
+r = subprocess.run([sys.executable, "-c", "import telegram, httpx, google.auth, yt_dlp, PIL"], capture_output=True, text=True)
 if r.returncode != 0:
-    logger.error("pip install failed (exit=%d): %s", r.returncode, r.stderr[-1000:])
-    state["step"] = "pip_failed"
-    sys.exit(1)
-logger.info("pip install done")
-state["step"] = "pip_done"
+    state["step"] = "pip_install"
+    r = subprocess.run([sys.executable, "-m", "pip", "install", "--no-cache-dir", "-r", "requirements.txt"], capture_output=True, text=True, timeout=180)
+    if r.returncode != 0:
+        logger.error("pip install failed (exit=%d): %s", r.returncode, r.stderr[-1000:])
+        state["step"] = "pip_failed"
+        sys.exit(1)
+    logger.info("pip install done")
+state["step"] = "deps_ok"
 
 from core.config import Settings
 from core import storage
