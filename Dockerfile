@@ -10,6 +10,6 @@ RUN python -c "import static_ffmpeg; static_ffmpeg.add_paths()"
 
 COPY . .
 
-EXPOSE 10000
+EXPOSE 8080
 
 CMD ["python", "start.py"]
