@@ -26,6 +26,10 @@ logger.info("Starting health server on %d", PORT)
 t = threading.Thread(target=lambda: HTTPServer(("0.0.0.0", PORT), H).serve_forever(), daemon=True)
 t.start()
 
+# Install deps at runtime (build-time pip fails on Render)
+import subprocess
+subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", "-r", "requirements.txt"])
+
 from core.config import Settings
 from core import storage
 
