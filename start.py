@@ -43,17 +43,19 @@ class _TgNotifier:
             logger.warning("Send video failed for %d: %s", user_id, e)
 
 
-def _start_health_server(port: int, stop: threading.Event):
-    class H(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.send_header("Content-Length", "2")
-            self.end_headers()
-            self.wfile.write(b"OK")
-        def log_message(self, format, *args):
-            pass
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, format, *args):
+        pass
 
-    server = HTTPServer(("0.0.0.0", port), H)
+
+def _start_health_server(port: int, stop: threading.Event):
+    server = HTTPServer(("0.0.0.0", port), _HealthHandler)
     logger.info("Health server on port %d", port)
     while not stop.is_set():
         server.handle_request()
@@ -74,9 +76,12 @@ def main():
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    logger.info("PORT env = '%s'", os.environ.get("PORT", ""))
+    logger.info("Starting up with PID %d", os.getpid())
+
     try:
         settings = Settings.from_env()
-        logger.info("Settings loaded (data_dir=%s)", settings.data_dir)
+        logger.info("Settings loaded (data_dir=%s, port=%d)", settings.data_dir, settings.port)
     except KeyError as e:
         logger.error("Missing env var: %s", e)
         sys.exit(1)
