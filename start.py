@@ -2,14 +2,13 @@ import asyncio
 import logging
 import os
 import sys
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from telegram import InputFile
 
 from core.config import Settings
 from core import storage
-from pipeline.worker import Worker
-from bots.user import create_app as create_user_app
-from bots.admin import create_app as create_admin_app
 
 logger = logging.getLogger("start")
 
@@ -44,26 +43,20 @@ class _TgNotifier:
             logger.warning("Send video failed for %d: %s", user_id, e)
 
 
-async def _health_server(port: int, stop: asyncio.Event):
-    async def handle(reader, writer):
-        try:
-            _ = await reader.read(65536)
-        except Exception:
-            pass
-        try:
-            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: text/plain\r\n\r\nOK")
-            await writer.drain()
-        except Exception:
-            pass
-        try:
-            writer.close()
-        except Exception:
+def _start_health_server(port: int, stop: threading.Event):
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"OK")
+        def log_message(self, format, *args):
             pass
 
-    server = await asyncio.start_server(handle, "0.0.0.0", port)
-    async with server:
-        logger.info("Health server on port %d", port)
-        await stop.wait()
+    server = HTTPServer(("0.0.0.0", port), H)
+    logger.info("Health server on port %d", port)
+    while not stop.is_set():
+        server.handle_request()
 
 
 async def _run_bot(app, stop: asyncio.Event, name: str):
@@ -88,12 +81,22 @@ def main():
         logger.error("Missing env var: %s", e)
         sys.exit(1)
 
+    health_stop = threading.Event()
+    health_thread = threading.Thread(
+        target=_start_health_server, args=(settings.port, health_stop), daemon=True
+    )
+    health_thread.start()
+
     storage.init(
         settings.data_dir,
         supabase_url=settings.supabase_url,
         supabase_key=settings.supabase_service_key,
     )
     os.makedirs(settings.temp_dir, exist_ok=True)
+
+    from pipeline.worker import Worker
+    from bots.user import create_app as create_user_app
+    from bots.admin import create_app as create_admin_app
 
     notifier = _TgNotifier()
     worker = Worker(settings=settings, notify=notifier)
@@ -108,7 +111,6 @@ def main():
                 _run_bot(user_app, stop, "user bot"),
                 _run_bot(admin_app, stop, "admin bot"),
                 worker.run(),
-                _health_server(settings.port, stop),
             )
         except asyncio.CancelledError:
             pass
@@ -120,6 +122,7 @@ def main():
             await user_app.shutdown()
             await admin_app.shutdown()
             await storage.close()
+            health_stop.set()
 
     asyncio.run(runner())
 
