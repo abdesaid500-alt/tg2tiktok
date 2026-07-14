@@ -9,7 +9,6 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
-from yt_dlp import YoutubeDL
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +82,8 @@ async def download_video(
             raw = base64.b64decode(cookies_b64 + padding)
             with open(cookies_file, "wb") as f:
                 f.write(raw)
+
+        from yt_dlp import YoutubeDL
 
         output_template = os.path.join(output_dir, "%(title).80s.%(ext)s")
         ydl_opts = {
