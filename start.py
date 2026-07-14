@@ -90,12 +90,17 @@ try:
         while not stop.is_set():
             try:
                 await app.updater.start_polling()
+                state["bots"] = state.get("bots", {})
+                state["bots"][name] = "polling"
                 break
             except Exception as e:
                 logger.warning("%s polling failed, retry in 5s: %s", name, e)
                 await asyncio.sleep(5)
         logger.info("%s running", name)
+        state["bots"] = state.get("bots", {})
+        state["bots"][name] = "running"
         await stop.wait()
+        state["bots"][name] = "stopped"
 
     logger.info("Initializing bots...")
     notifier = _TgNotifier()
@@ -108,11 +113,18 @@ try:
 
     async def runner():
         stop = asyncio.Event()
+        async def _state_updater():
+            while not stop.is_set():
+                state["bots"] = state.get("bots", {})
+                n_running = sum(1 for v in state["bots"].values() if v == "running")
+                state["step"] = f"running ({n_running}/2 bots)"
+                await asyncio.sleep(15)
         try:
             await asyncio.gather(
                 _run_bot(user_app, stop, "user bot"),
                 _run_bot(admin_app, stop, "admin bot"),
                 worker.run(),
+                _state_updater(),
             )
         except asyncio.CancelledError:
             pass
@@ -126,6 +138,7 @@ try:
             await storage.close()
 
     state["step"] = "starting_polling"
+    state["bots"] = {}
     asyncio.run(runner())
 
 except Exception as e:
