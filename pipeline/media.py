@@ -1,4 +1,5 @@
 import os
+import sys
 import asyncio
 import subprocess
 import json
@@ -82,7 +83,12 @@ async def download_video(
             with open(cookies_file, "wb") as f:
                 f.write(raw)
 
-        from yt_dlp import YoutubeDL
+        try:
+            from yt_dlp import YoutubeDL
+        except ImportError:
+            import subprocess as _sp
+            _sp.run([sys.executable, "-m", "pip", "install", "yt-dlp"], capture_output=True, text=True, timeout=120)
+            from yt_dlp import YoutubeDL
 
         output_template = os.path.join(output_dir, "%(title).80s.%(ext)s")
         ydl_opts = {
