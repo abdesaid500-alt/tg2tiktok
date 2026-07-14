@@ -1,5 +1,4 @@
 import os
-import sys
 import asyncio
 import subprocess
 import json
@@ -10,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
+from yt_dlp import YoutubeDL
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,8 @@ def _make_text_overlay(output_dir: str, part_idx: int) -> str:
     return path
 
 
+from yt_dlp import YoutubeDL
+
 async def download_video(
     url: str,
     output_dir: str,
@@ -83,56 +85,48 @@ async def download_video(
                 f.write(raw)
 
         output_template = os.path.join(output_dir, "%(title).80s.%(ext)s")
-        cmd = [
-            sys.executable, "-m", "yt_dlp",
-            "--force-ipv4",
-            "--no-playlist",
-            "--print", "after_move:%(title)s",
-            "--print", "after_move:%(duration)s",
-            "--print", "after_move:%(filename)s",
-            "-o", output_template,
-        ]
+        ydl_opts = {
+            "format": "bestvideo+bestaudio/best",
+            "forceipv4": True,
+            "noplaylist": True,
+            "outtmpl": output_template,
+        }
         if cookies_b64:
-            cmd.extend(["--cookies", cookies_file])
-        extractor_args = "youtube:player_client=ios,android,mweb"
+            ydl_opts["cookiefile"] = cookies_file
+
+        extractor_args = {"youtube": {"player_client": ["ios", "android", "mweb"]}}
         if po_token:
-            extractor_args += f";po_token={po_token}"
+            extractor_args["youtube"]["po_token"] = po_token
         if visitor_data:
-            extractor_args += f";visitor_data={visitor_data}"
-        cmd.extend(["--extractor-args", extractor_args])
-        cmd.append(url)
+            extractor_args["youtube"]["visitor_data"] = visitor_data
+        ydl_opts["extractor_args"] = extractor_args
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        if result.returncode != 0:
-            err = result.stderr.strip()
-            if any(k in err.lower() for k in ["cookie", "sign in", "403", "bot"]):
+        try:
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                if info is None:
+                    raise RuntimeError("No info returned from yt-dlp")
+                title = info.get("title", "Unknown")
+                duration = info.get("duration", 0.0) or 0.0
+                fname = ydl.prepare_filename(info)
+                if not fname or not os.path.exists(fname):
+                    for f in os.listdir(output_dir):
+                        if f.endswith((".mp4", ".mkv", ".webm")):
+                            fname = os.path.join(output_dir, f)
+                            break
+                return {"title": title, "duration": float(duration), "path": fname}
+        except Exception as e:
+            estr = str(e)
+            if any(k in estr.lower() for k in ["cookie", "sign in", "403", "bot"]):
                 raise PermissionError("COOKIES_EXPIRED")
-            raise RuntimeError(f"yt-dlp failed: {err[-300:]}")
-
-        lines = result.stdout.strip().split("\n")
-        title = lines[0] if len(lines) > 0 else "Unknown"
-        duration = 0.0
-        if len(lines) > 1:
-            try:
-                duration = float(lines[1]) if lines[1] not in ("NA", "") else 0.0
-            except (ValueError, TypeError):
-                duration = 0.0
-        fname = lines[2] if len(lines) > 2 else ""
-
-        if not fname or not os.path.exists(fname):
-            for f in os.listdir(output_dir):
-                if f.endswith((".mp4", ".mkv", ".webm")):
-                    fname = os.path.join(output_dir, f)
-                    break
-
-        return {"title": title, "duration": duration, "path": fname}
+            raise RuntimeError(f"yt-dlp failed: {estr[-300:]}")
 
     try:
         return await loop.run_in_executor(None, _run)
     except PermissionError:
         raise
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("Download timed out")
+    except RuntimeError:
+        raise
     except Exception as e:
         raise RuntimeError(str(e))
 
