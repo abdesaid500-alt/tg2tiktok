@@ -63,7 +63,6 @@ def _make_text_overlay(output_dir: str, part_idx: int) -> str:
     return path
 
 
-from yt_dlp import YoutubeDL
 
 async def download_video(
     url: str,
