@@ -1,4 +1,5 @@
 import os
+import sys
 import asyncio
 import subprocess
 import json
@@ -83,7 +84,7 @@ async def download_video(
 
         output_template = os.path.join(output_dir, "%(title).80s.%(ext)s")
         cmd = [
-            "yt-dlp",
+            sys.executable, "-m", "yt_dlp",
             "--force-ipv4",
             "--no-playlist",
             "--print", "after_move:%(title)s",

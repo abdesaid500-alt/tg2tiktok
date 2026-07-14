@@ -6,7 +6,7 @@ WORKDIR /app
 
 COPY requirements.txt .
 
-RUN pip install --no-cache-dir --timeout 120 -r requirements.txt && yt-dlp --version
+RUN pip install --no-cache-dir --only-binary :all: --timeout 120 -r requirements.txt && python -m yt_dlp --version
 
 COPY . .
 
