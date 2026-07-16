@@ -22,7 +22,9 @@ class H(BaseHTTPRequestHandler):
         s = state.copy()
         if "traceback" in s:
             s["traceback"] = s["traceback"][-500:]
-        self.send_response(200)
+        step = s.get("step", "")
+        is_error = step.startswith("error") or step == "pip_failed"
+        self.send_response(503 if is_error else 200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(json.dumps(s).encode())
@@ -34,20 +36,6 @@ PORT = int(os.environ.get("PORT", 10000))
 logger.info("Starting health server on %d", PORT)
 t = threading.Thread(target=lambda: HTTPServer(("0.0.0.0", PORT), H).serve_forever(), daemon=True)
 t.start()
-
-# Install deps at runtime if not already installed (build-time pip may fail on Render)
-state["step"] = "check_deps"
-import subprocess
-r = subprocess.run([sys.executable, "-c", "import telegram, httpx, google.auth, yt_dlp, PIL"], capture_output=True, text=True)
-if r.returncode != 0:
-    state["step"] = "pip_install"
-    r = subprocess.run([sys.executable, "-m", "pip", "install", "--no-cache-dir", "-r", "requirements.txt"], capture_output=True, text=True, timeout=180)
-    if r.returncode != 0:
-        logger.error("pip install failed (exit=%d): %s", r.returncode, r.stderr[-1000:])
-        state["step"] = "pip_failed"
-        sys.exit(1)
-    logger.info("pip install done")
-state["step"] = "deps_ok"
 
 try:
     from core.config import Settings

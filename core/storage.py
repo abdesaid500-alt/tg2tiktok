@@ -34,8 +34,10 @@ def _path(name: str) -> str:
 
 
 async def _load(name: str) -> dict:
-    if name == "users" and _supabase_url:
-        return await _db_load_users()
+    if _supabase_url:
+        if name == "users":
+            return await _db_load_users()
+        return await _db_load_kv(name)
     p = _path(name)
     if os.path.exists(p):
         loop = asyncio.get_running_loop()
@@ -47,8 +49,11 @@ async def _load(name: str) -> dict:
 
 
 async def _dump(name: str, data: dict) -> None:
-    if name == "users" and _supabase_url:
-        await _db_save_users(data)
+    if _supabase_url:
+        if name == "users":
+            await _db_save_users(data)
+        else:
+            await _db_save_kv(name, data)
         return
     p = _path(name)
     loop = asyncio.get_running_loop()
@@ -87,6 +92,25 @@ async def _db_save_users(data: dict) -> None:
         return
     await client.post(
         "/users",
+        json=payload,
+        headers={"Prefer": "resolution=merge-duplicates"},
+    )
+
+
+async def _db_load_kv(name: str) -> dict:
+    client = await _supabase()
+    resp = await client.get("/app_kv", params={"key": f"eq.{name}", "select": "value"})
+    rows = resp.json()
+    if rows and isinstance(rows, list) and rows[0].get("value") is not None:
+        return rows[0]["value"]
+    return {}
+
+
+async def _db_save_kv(name: str, data: dict) -> None:
+    client = await _supabase()
+    payload = {"key": name, "value": data}
+    await client.post(
+        "/app_kv",
         json=payload,
         headers={"Prefer": "resolution=merge-duplicates"},
     )

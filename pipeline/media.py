@@ -1,5 +1,4 @@
 import os
-import sys
 import asyncio
 import subprocess
 import json
@@ -12,18 +11,6 @@ from typing import Optional
 from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
-
-
-def _init_ffmpeg() -> None:
-    try:
-        import static_ffmpeg
-        static_ffmpeg.add_paths()
-        logger.info("static-ffmpeg initialized")
-    except Exception as e:
-        logger.warning("static-ffmpeg not available: %s", e)
-
-
-_init_ffmpeg()
 
 
 def _find_font() -> Optional[str]:
@@ -83,12 +70,7 @@ async def download_video(
             with open(cookies_file, "wb") as f:
                 f.write(raw)
 
-        try:
-            from yt_dlp import YoutubeDL
-        except ImportError:
-            import subprocess as _sp
-            _sp.run([sys.executable, "-m", "pip", "install", "yt-dlp"], capture_output=True, text=True, timeout=120)
-            from yt_dlp import YoutubeDL
+        from yt_dlp import YoutubeDL
 
         output_template = os.path.join(output_dir, "%(title).80s.%(ext)s")
         ydl_opts = {

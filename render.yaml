@@ -4,6 +4,10 @@ services:
     runtime: docker
     repo: https://github.com/abdesaid500-alt/tg2tiktok
     branch: main
+    # Free plan — no persistent disk (all state lives in Supabase instead).
+    # Requires an external uptime pinger (e.g. UptimeRobot) hitting
+    # healthCheckPath every ~10 min to prevent the 15-min inactivity
+    # spin-down that Render applies on the free tier.
     plan: free
     envVars:
       - key: USER_BOT_TOKEN
@@ -27,9 +31,5 @@ services:
       - key: SUPABASE_SERVICE_KEY
         sync: false
       - key: DATA_DIR
-        value: /data
-    disk:
-      name: data
-      mountPath: /data
-      sizeGB: 1
+        value: /tmp/tg2tiktok-data
     healthCheckPath: /
