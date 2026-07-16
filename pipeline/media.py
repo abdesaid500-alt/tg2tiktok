@@ -92,7 +92,7 @@ async def download_video(
 
         output_template = os.path.join(output_dir, "%(title).80s.%(ext)s")
         ydl_opts = {
-            "format": "bestvideo+bestaudio/best",
+            "format": "best",
             "forceipv4": True,
             "noplaylist": True,
             "outtmpl": output_template,
